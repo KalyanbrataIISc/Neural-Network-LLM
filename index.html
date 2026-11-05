@@ -1,15 +1,246 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101313"><title>Breakout Lab — Learn by playing</title><link rel="stylesheet" href="/src/style.css"></head>
-<body><main>
-<header><a class="brand" href="/" aria-label="Breakout Lab home"><span class="brand-icon">▥</span> BREAKOUT<span class="muted"> / LAB</span></a><span class="local"><i></i> RUNNING LOCALLY <span class="version">v.01</span></span></header>
-<section class="intro"><div><div class="eyebrow">A LITTLE GAME. A LITTLE INTELLIGENCE.</div><h1>Play. Train. <span>Let it learn.</span></h1><p>A classic arcade game, a tiny neural network. Take the controls,<br class="desktop"> teach the paddle, then watch your model play.</p></div><div class="experiment"><span>EXPERIMENT 001</span><b>Breakout</b><span>5 INPUTS → 24 → 24 → 1 OUTPUT</span></div></section>
-<div class="workspace"><section class="game-panel"><div class="panel-top"><div class="tabs" aria-label="Paddle controller"><button id="human" class="selected" aria-pressed="true">⌨ <span>Human control</span></button><button id="ai" aria-pressed="false">✧ <span>Neural network</span></button></div><span id="live-label" class="live"><i></i> HUMAN IN CONTROL</span></div>
-<div class="scoreboard"><div><span>SCORE</span><strong id="score">0000</strong></div><div><span>BRICKS</span><strong><span id="bricks">50</span><small> / 50</small></strong></div><div class="lives"><span>LIVES</span><strong id="lives">● ● ●</strong></div></div>
-<div class="arena"><canvas id="game" width="900" height="540" tabindex="0" aria-label="Breakout game. Use left and right arrow keys or A and D to move, Space to launch or pause."></canvas><div id="overlay" class="overlay"><div class="overlay-symbol">↔</div><span class="eyebrow" id="overlay-tag">YOU'RE IN CONTROL</span><h2 id="overlay-title">Meet your paddle.</h2><p id="overlay-copy">Move with ← → or A / D. Keep the ball in play.</p><button id="play" class="primary">Start playing <span>↗</span></button><small id="overlay-hint">or press SPACE to launch</small></div></div>
-<div class="game-footer"><span><kbd>←</kbd> <kbd>→</kbd> move <span class="divider">/</span> <kbd>space</kbd> pause / launch</span><div><button id="pause" class="text-button">Ⅱ Pause</button><button id="reset" class="text-button">↻ Restart</button></div></div></section>
-<aside><section class="training card"><div class="card-heading"><span class="eyebrow">THE LEARNING PART</span><span class="chip">IN BROWSER</span></div><h2>Train your paddle<span>.</span></h2><p>A small network learns where to move from a ball-interception coach. You can keep playing while it trains.</p><div class="architecture" aria-label="Network architecture"><div><b>5</b><span>INPUTS</span></div><em>→</em><div><b>24</b><span>HIDDEN</span></div><em>→</em><div><b>24</b><span>HIDDEN</span></div><em>→</em><div><b>1</b><span>OUTPUT</span></div></div><div class="network-meta"><span>769 parameters</span><span>tanh activation</span></div>
-<label class="field-label" for="epochs">Training duration</label><select id="epochs"><option value="150">Quick run · 150 epochs</option><option value="500" selected>Standard run · 500 epochs</option><option value="1200">Deep run · 1,200 epochs</option></select>
-<button id="train" class="primary full">✧ <span>Train neural network</span><span>↗</span></button><div class="training-status"><span id="train-status" role="status">Ready when you are</span><span id="epoch">0 / 500</span></div><div class="progress"><div id="progress"></div></div><div class="loss-header"><span>VALIDATION ERROR</span><b id="loss">— <small>px</small></b></div><canvas id="chart" width="620" height="130" aria-label="Validation error over training epochs"></canvas><div class="chart-caption"><span>LOWER IS BETTER</span><span id="samples">0 training examples</span></div></section>
-<section class="card model-card"><div class="card-heading"><span class="eyebrow">MODEL CHECKPOINT</span><i id="model-dot"></i></div><h3 id="model-title">A blank slate.</h3><p id="model-info">Train a network to save your first set of weights. Everything stays in your browser.</p><button id="deploy" class="deploy" disabled>Watch AI play <span>→</span></button><div class="model-actions"><button id="export" disabled>↓ Export weights</button><button id="import">↑ Import weights</button><input id="file" type="file" accept=".json,application/json" hidden></div></section></aside></div>
-<footer><span><i></i> Built to explore. No perfect scores required.</span><span>KEYBOARD → NEURONS → PADDLE</span></footer><p id="notice" role="status" class="notice" hidden></p>
-</main><script type="module" src="/src/app.js"></script></body></html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#101313" />
+    <title>Breakout Lab — Learn by playing</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <a class="brand" href="/" aria-label="Breakout Lab home"
+          ><span class="brand-icon">▥</span> BREAKOUT<span class="muted">
+            / LAB</span
+          ></a
+        ><span class="local"
+          ><i></i> RUNNING LOCALLY <span class="version">v.01</span></span
+        >
+      </header>
+      <section class="intro">
+        <div>
+          <div class="eyebrow">A LITTLE GAME. A LITTLE INTELLIGENCE.</div>
+          <h1>Play. Train. <span>Let it learn.</span></h1>
+          <p>
+            A classic arcade game, a tiny neural network. Take the controls,<br
+              class="desktop"
+            />
+            train the paddle, then watch your model play.
+          </p>
+        </div>
+        <div class="experiment">
+          <span>EXPERIMENT 001</span><b>Breakout</b
+          ><span id="experiment-shape">5 INPUTS → 24 → 24 → 3 ACTIONS</span>
+        </div>
+      </section>
+      <div class="workspace">
+        <section class="game-panel">
+          <div class="panel-top">
+            <div class="tabs" aria-label="Paddle controller">
+              <button id="human" class="selected" aria-pressed="true">
+                ⌨ <span>Human control</span></button
+              ><button id="ai" aria-pressed="false">
+                ✧ <span>Neural network</span>
+              </button>
+            </div>
+            <span id="live-label" class="live"><i></i> HUMAN IN CONTROL</span>
+          </div>
+          <div class="scoreboard">
+            <div><span>SCORE</span><strong id="score">0000</strong></div>
+            <div>
+              <span>BRICKS</span
+              ><strong><span id="bricks">50</span><small> / 50</small></strong>
+            </div>
+            <div class="lives">
+              <span>LIVES</span><strong id="lives">● ● ●</strong>
+            </div>
+          </div>
+          <div class="arena">
+            <canvas
+              id="game"
+              width="900"
+              height="540"
+              tabindex="0"
+              aria-label="Breakout game. Use left and right arrow keys or A and D to move, Space to launch or pause."
+            ></canvas>
+            <div id="overlay" class="overlay">
+              <div class="overlay-symbol">↔</div>
+              <span class="eyebrow" id="overlay-tag">YOU'RE IN CONTROL</span>
+              <h2 id="overlay-title">Meet your paddle.</h2>
+              <p id="overlay-copy">
+                Move with ← → or A / D. Keep the ball in play.
+              </p>
+              <button id="play" class="primary">
+                Start playing <span>↗</span></button
+              ><small id="overlay-hint">or press SPACE to launch</small>
+            </div>
+          </div>
+          <div class="game-footer">
+            <span
+              ><kbd>←</kbd> <kbd>→</kbd> move <span class="divider">/</span>
+              <kbd>space</kbd> pause / launch</span
+            >
+            <div>
+              <button id="pause" class="text-button">Ⅱ Pause</button
+              ><button id="reset" class="text-button">↻ Restart</button>
+            </div>
+          </div>
+        </section>
+        <aside>
+          <section class="training card">
+            <div class="card-heading">
+              <span class="eyebrow">THE LEARNING PART</span
+              ><span class="chip">IN BROWSER</span>
+            </div>
+            <h2>Train your paddle<span>.</span></h2>
+            <p>
+              A small network learns by trial and error in fast-forwarded games.
+              Thousands of simulations. Real rewards. No coach.
+            </p>
+            <div class="architecture" aria-label="Network architecture">
+              <div><b>5</b><span>INPUTS</span></div>
+              <em>→</em>
+              <div><b id="hidden-1-count">24</b><span>HIDDEN</span></div>
+              <em>→</em>
+              <div><b id="hidden-2-count">24</b><span>HIDDEN</span></div>
+              <em>→</em>
+              <div><b>3</b><span>ACTIONS</span></div>
+            </div>
+            <div class="network-meta">
+              <span id="parameter-count">819 parameters</span
+              ><span>Double DQN</span>
+            </div>
+            <label class="field-label" for="epochs">Simulation budget</label
+            ><select id="epochs">
+              <option value="1000">Quick run · 1,000 episodes</option>
+              <option value="5000" selected>
+                Standard run · 5,000 episodes
+              </option>
+              <option value="25000">Deep run · 25,000 episodes</option>
+              <option value="100000">Marathon · 100,000 episodes</option>
+            </select>
+            <label class="fresh-option"
+              ><input id="fresh" type="checkbox" /> Reset weights; keep my
+              neuron structure</label
+            >
+            <button id="train" class="primary full">
+              ✧ <span>Train neural network</span><span>↗</span>
+            </button>
+            <div class="training-status">
+              <span id="train-status" role="status">Ready when you are</span
+              ><span id="epoch">0 / 5,000</span>
+            </div>
+            <div class="progress"><div id="progress"></div></div>
+            <div class="simulation-metrics">
+              <span id="throughput">0 frames / sec</span
+              ><span id="exploration">Exploration: 100%</span>
+            </div>
+            <div class="loss-header">
+              <span>EVALUATION SCORE</span><b id="loss">— <small>pts</small></b>
+            </div>
+            <canvas
+              id="chart"
+              width="620"
+              height="130"
+              aria-label="Average evaluation score over reinforcement-learning episodes"
+            ></canvas>
+            <div class="chart-caption">
+              <span>HIGHER IS BETTER · 5 TEST GAMES</span
+              ><span id="samples">0 simulated frames</span>
+            </div>
+          </section>
+          <section class="card model-card">
+            <div class="card-heading">
+              <span class="eyebrow">MODEL CHECKPOINT</span
+              ><i id="model-dot"></i>
+            </div>
+            <h3 id="model-title">A blank slate.</h3>
+            <p id="model-info">
+              Train a network to save your first set of weights. Everything
+              stays in your browser.
+            </p>
+            <button id="deploy" class="deploy" disabled>
+              Watch AI play <span>→</span></button
+            ><button id="inspect" class="inspect-button">
+              ◎ Edit neurons & weights
+            </button>
+            <div class="model-actions">
+              <button id="export" disabled>↓ Export weights</button
+              ><button id="import">↑ Import weights</button
+              ><input
+                id="file"
+                type="file"
+                accept=".json,application/json"
+                hidden
+              />
+            </div>
+          </section>
+        </aside>
+      </div>
+      <footer>
+        <span><i></i> Built to explore. No perfect scores required.</span
+        ><span>KEYBOARD → NEURONS → PADDLE</span>
+      </footer>
+      <p id="notice" role="status" class="notice" hidden></p>
+    </main>
+    <dialog id="inspector">
+      <div class="inspector-heading">
+        <div>
+          <span class="eyebrow">INSIDE THE NETWORK</span>
+          <h2>Small enough to understand.</h2>
+        </div>
+        <button
+          id="close-inspector"
+          class="text-button"
+          aria-label="Close network inspector"
+        >
+          ✕ Close
+        </button>
+      </div>
+      <p>
+        <span id="structure-summary">5 → 24 → 24 → 3 · 819 parameters</span>
+      </p>
+      <p class="input-explanation">
+        Inputs: ball_x / ball_y / paddle_x are scaled to −1…1. velocity_x /
+        velocity_y are divided by 6. Outputs: move_left, stay, move_right. The
+        highest Q value wins.
+      </p>
+      <label class="field-label" for="inspect-layer">Explore a layer</label
+      ><select id="inspect-layer">
+        <option value="0">Hidden layer 1 · tanh</option>
+        <option value="1">Hidden layer 2 · tanh</option>
+        <option value="2">Actions · 3 neurons · linear Q values</option>
+      </select>
+      <div class="editor-actions">
+        <button id="add-neuron" class="deploy">
+          + Add neuron in this layer</button
+        ><button id="remove-neuron" class="text-button">
+          − Remove last neuron
+        </button>
+      </div>
+      <p id="neuron-equation"></p>
+      <div class="table-scroll"><table id="weight-table"></table></div>
+      <details>
+        <summary>Edit the complete model as JSON</summary>
+        <textarea
+          id="model-json"
+          spellcheck="false"
+          aria-label="Editable network model JSON"
+        ></textarea>
+      </details>
+      <div class="editor-actions">
+        <button id="apply-model" class="primary">
+          Apply edits to live game →</button
+        ><button id="reload-model" class="text-button">
+          ↻ Reload project weights
+        </button>
+      </div>
+      <p id="editor-status" role="status" class="input-explanation">
+        Edits are drafts until applied. Applying stops any active training.
+        Export to save your model as a file.
+      </p>
+    </dialog>
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>
