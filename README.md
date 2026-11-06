@@ -66,3 +66,13 @@ Tests cover collisions, terminal rewards, checkpoint validation, actual action c
 - `src/app.js`: live game, editor, model controls
 - `scripts/train.js`: terminal training and checkpoint saves
 - `server.js`: dependency-free local static server
+
+## Visual workbench
+
+The light workspace starts with 25% game / 75% neural network. Drag the vertical divider (or focus it and use arrow keys) to resize; your split is saved. Training, JSON import/export, and the full numeric editor live under **Settings & training**.
+
+The network map shows every connection. Teal means a positive weight, coral means negative; color intensity shows magnitude. All lines have the same width. Click a neuron to reveal its incoming weight labels; hover any neuron or connection for exact activation, bias, or weight values. Glowing neurons and moving signals replay captured forward-pass activations. This is an explanatory replay of an instantaneous calculation, not a claim that computation physically travels at the animation's speed. In human mode the network observes the live game state as well.
+
+Use **Playback** to slow the game and animation together, or pause. **Step layer** pauses playback and reveals input → hidden 1 → hidden 2 → action one layer at a time; completing an inference advances the game by one action interval. Training remains fast and independent of playback speed. During training the map displays current learner weight snapshots and actual replay-buffer sample inputs, separately from the best checkpoint controlling the game.
+
+Drag a neuron from the palette into either hidden layer. Drag one neuron onto a neuron in the next layer to create/update a connection (initial weight 0.1); shift-drag to rearrange nodes visually. Connections follow the existing four-column feed-forward architecture. Right-click a hidden/action neuron to edit its bias, or a connection to edit its weight. Changes apply immediately; ↑/↓ nudges by 0.01. Set a connection to zero to remove its contribution. Editing stops active training to prevent it overwriting your edits; gameplay continues. Export saves the resulting numeric model, which another user can import. Visual node positions are workspace-only.

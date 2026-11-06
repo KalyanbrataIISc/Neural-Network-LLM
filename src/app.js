@@ -1,3 +1,4 @@
+import { NetworkMap } from "./network-map.js";
 import { Game, W, H, R, PADDLE_W, PADDLE_Y, inputs } from "./game.js";
 import { Network, ACTIONS, INPUT_NAMES, neuronNames } from "./network.js";
 import { ACTION_FRAMES } from "./trainer.js";
@@ -21,6 +22,32 @@ let mode = "human",
   aiAction = 1,
   aiTicks = 0,
   readySince = 0;
+const map = new NetworkMap($("network-map"), {
+  getNetwork: () => network,
+  commit: (next) => {
+    if (worker) {
+      stopTraining();
+      notice("Training stopped to preserve your live edit.");
+    }
+    install(next.serialize());
+  },
+  notify: (message) => notice(message),
+});
+$("settings-open").onclick = () => $("settings-panel").showModal();
+$("settings-close").onclick = () => $("settings-panel").close();
+$("step-layer").onclick = () => {
+  $("speed").value = "0";
+  if (network) {
+    const done = map.step(inputs(game.ball, game.paddle));
+    if (done) {
+      if (game.state === "ready") game.launch();
+      if (game.state === "paused") game.state = "playing";
+      const action = network.action(inputs(game.ball, game.paddle));
+      for (let i = 0; i < ACTION_FRAMES; i++) game.step(1, ACTIONS[action]);
+      sync();
+    }
+  }
+};
 function notice(message) {
   $("notice").textContent = message;
   $("notice").hidden = false;
@@ -40,6 +67,7 @@ function install(data, persist = true) {
     }
   }
   aiTicks = 0;
+  map.reset();
   const count = network.weights.flat(2).length;
   $("experiment-shape").textContent =
     `${network.shape[0]} INPUTS → ${network.shape[1]} → ${network.shape[2]} → ${network.shape[3]} ACTIONS`;
@@ -111,7 +139,8 @@ $("reset").onclick = () => {
   sync();
 };
 window.addEventListener("keydown", (e) => {
-  if (e.target.closest("select,input,button,a")) return;
+  if (e.defaultPrevented || e.target.closest("select,input,textarea,button,a"))
+    return;
   if (["ArrowLeft", "ArrowRight", "a", "d", "A", "D", " "].includes(e.key)) {
     e.preventDefault();
     keys.add(e.key.toLowerCase());
@@ -221,12 +250,12 @@ function draw() {
     ctx.fillStyle = `rgba(197,244,157,${(i / game.trail.length) * 0.2})`;
     ctx.fill();
   }
-  ctx.shadowColor = "#b9f577";
+  ctx.shadowColor = "#42bbae";
   ctx.shadowBlur = 16;
-  rounded(game.paddle - PADDLE_W / 2, PADDLE_Y, PADDLE_W, 11, 5, "#c6f397");
+  rounded(game.paddle - PADDLE_W / 2, PADDLE_Y, PADDLE_W, 11, 5, "#166f65");
   ctx.beginPath();
   ctx.arc(game.ball.x, game.ball.y, R, 0, Math.PI * 2);
-  ctx.fillStyle = "#f1f7df";
+  ctx.fillStyle = "#166f65";
   ctx.fill();
   ctx.shadowBlur = 0;
   ctx.strokeStyle = "#354231";
@@ -238,7 +267,7 @@ function draw() {
 function frame(t) {
   const elapsed = Math.min((t - last) / 1000, 0.08);
   last = t;
-  accumulator += elapsed;
+  accumulator += elapsed * Number($("speed").value);
   if (mode === "ai" && game.state === "ready") {
     if (!readySince) readySince = t;
     if (t - readySince > 1000) {
@@ -255,6 +284,7 @@ function frame(t) {
     if (mode === "ai" && network) {
       if (aiTicks <= 0) {
         aiAction = network.action(inputs(game.ball, game.paddle));
+        map.capture(network);
         aiTicks = ACTION_FRAMES * 2;
       }
       aiTicks--;
@@ -269,7 +299,12 @@ function frame(t) {
   }
   $("score").textContent = String(game.score).padStart(4, "0");
   $("bricks").textContent = game.bricks.filter((b) => b.alive).length;
+  if (mode === "human" && network && Number($("speed").value) > 0) {
+    network.predict(inputs(game.ball, game.paddle));
+    map.capture(network);
+  }
   draw();
+  map.draw(t, Number($("speed").value));
   requestAnimationFrame(frame);
 }
 function drawChart() {
@@ -292,13 +327,14 @@ function drawChart() {
       y = h - 8 - (v / max) * (h - 16);
     i ? chart.lineTo(x, y) : chart.moveTo(x, y);
   });
-  chart.strokeStyle = "#b9f577";
+  chart.strokeStyle = "#42bbae";
   chart.lineWidth = 2;
   chart.stroke();
 }
 function stopTraining() {
   worker?.terminate();
   worker = null;
+  map.endTraining();
   $("train").innerHTML = "✧ <span>Train neural network</span><span>↗</span>";
   $("epochs").disabled = false;
   $("fresh").disabled = false;
@@ -326,6 +362,7 @@ $("train").onclick = () => {
     });
     worker.onmessage = ({ data }) => {
       if (data.type === "progress") {
+        if (data.snapshot) map.training(data.snapshot);
         if (data.episode % 100 === 0 || data.episode === data.episodes) {
           history.push(data.score);
           drawChart();
@@ -557,5 +594,40 @@ $("reload-model").onclick = async () => {
       "Project file reloaded and applied to the game.";
   } catch (e) {
     $("editor-status").textContent = e.message;
+  }
+};
+
+const divider = document.createElement("div");
+divider.className = "resize-divider";
+divider.tabIndex = 0;
+divider.setAttribute("role", "separator");
+divider.setAttribute("aria-label", "Resize game and neural network views");
+divider.setAttribute("aria-orientation", "vertical");
+const workspace = document.querySelector(".workspace");
+workspace.insertBefore(divider, document.querySelector(".network-panel"));
+function setSplit(value) {
+  const percent = Math.max(18, Math.min(65, value));
+  workspace.style.setProperty("--game-width", percent + "%");
+  divider.setAttribute("aria-valuenow", Math.round(percent));
+  localStorage.setItem("breakout-split", percent);
+}
+try {
+  setSplit(Number(localStorage.getItem("breakout-split") || 25));
+} catch {}
+divider.onpointerdown = (e) => {
+  divider.setPointerCapture(e.pointerId);
+  divider.onpointermove = (e) => {
+    const r = workspace.getBoundingClientRect();
+    setSplit(((e.clientX - r.left) / r.width) * 100);
+  };
+};
+divider.onpointerup = () => (divider.onpointermove = null);
+divider.onkeydown = (e) => {
+  if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
+    e.preventDefault();
+    setSplit(
+      Number(divider.getAttribute("aria-valuenow")) +
+        (e.key === "ArrowRight" ? 2 : -2),
+    );
   }
 };

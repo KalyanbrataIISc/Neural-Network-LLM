@@ -81,6 +81,13 @@ export function train({
     epsilon = initialModel && !resetWeights ? 0.2 : 1;
   const report = (episode) =>
     onProgress({
+      snapshot:
+        episode % 10 === 0
+          ? {
+              ...network.serialize(),
+              visualizationInput: Array.from(network.activations[0]),
+            }
+          : null,
       episode,
       episodes,
       score: evaluation.score,
