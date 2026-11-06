@@ -3,7 +3,13 @@ import { BrainStore } from "./brains.js";
 import { createGame, GAMES, schedule } from "./games.js";
 import { NetworkMap } from "./network-map.js";
 import { W, H, R, PADDLE_W, PADDLE_Y, inputs } from "./game.js";
-import { Network, ACTIONS, INPUT_NAMES, neuronNames } from "./network.js";
+import {
+  Network,
+  ACTIONS,
+  INPUT_NAMES,
+  neuronNames,
+  SHAPE,
+} from "./network.js";
 import { ACTION_FRAMES } from "./trainer.js";
 const $ = (id) => document.getElementById(id),
   ctx = $("game").getContext("2d"),
@@ -28,7 +34,12 @@ let mode = "human",
   jsonDirty = false,
   aiAction = 1,
   aiTicks = 0,
-  readySince = 0;
+  readySince = 0,
+  endedSince = 0,
+  manualSession = false,
+  stepBusy = false,
+  latestUpdates = "",
+  trainingStarting = false;
 const map = new NetworkMap($("network-map"), {
   getNetwork: () => network,
   commit: (next) => {
@@ -303,11 +314,28 @@ function frame(t) {
   const elapsed = Math.min((t - last) / 1000, 0.08);
   last = t;
   accumulator += elapsed * Number($("speed").value);
+  if (
+    ["won", "lost"].includes(game.state) &&
+    $("auto-restart").checked &&
+    Number($("speed").value) > 0
+  ) {
+    if (!endedSince) endedSince = t;
+    if (t - endedSince > 1200) {
+      game.reset();
+      game.launch();
+      endedSince = 0;
+      sync();
+    }
+  } else endedSince = 0;
   if (mode === "ai" && game.state === "ready") {
     if (!readySince) readySince = t;
     if (t - readySince > 1000) {
       game.launch();
-      readySince = 0;
+      ((readySince = 0),
+        (endedSince = 0),
+        (manualSession = false),
+        (stepBusy = false),
+        (latestUpdates = ""));
       sync();
     }
   } else readySince = 0;
@@ -368,6 +396,8 @@ function drawChart() {
   chart.stroke();
 }
 function stopTraining() {
+  manualSession = false;
+  stepBusy = false;
   worker?.terminate();
   if (nativeJob) {
     fetch(`/api/native/jobs/${nativeJob}`, { method: "DELETE" }).catch(
@@ -387,7 +417,8 @@ $("epochs").onchange = () => {
     $("epoch").textContent =
       `0 / ${Number($("epochs").value).toLocaleString()}`;
 };
-$("train").onclick = () => {
+function beginTraining(manual = false) {
+  if (trainingStarting) return;
   if (worker || nativeJob) {
     stopTraining();
     $("train-status").textContent = "Training stopped";
@@ -400,10 +431,12 @@ $("train").onclick = () => {
     notice(e.message);
     return;
   }
-  if ($("training-engine").value === "native") {
-    startNative(plan);
+  if ($("training-engine").value.startsWith("native")) {
+    startNative(plan, manual);
     return;
   }
+  manualSession = manual;
+  stepBusy = manual;
   history = [];
   drawChart();
   $("epochs").disabled = true;
@@ -421,7 +454,11 @@ $("train").onclick = () => {
           $("per-game-eval").textContent = Object.entries(data.byGame)
             .map(([id, v]) => `${GAMES[id].name}: ${v.score.toFixed(0)} pts`)
             .join(" · ");
-        if (data.episode % 100 === 0 || data.episode === data.episodes) {
+        if (
+          manualSession ||
+          data.episode % 100 === 0 ||
+          data.episode === data.episodes
+        ) {
           history.push(data.score);
           drawChart();
         }
@@ -436,6 +473,23 @@ $("train").onclick = () => {
           `${data.framesPerSecond.toLocaleString()} frames / sec`;
         $("exploration").textContent =
           `Exploration: ${Math.round(data.epsilon * 100)}%`;
+      }
+      if (data.replaySize !== undefined)
+        latestUpdates = `Replay ${data.replaySize} / ${data.warmup} warmup · ${data.updates} optimizer updates`;
+      if (data.type === "manual-step" || data.type === "manual-paused") {
+        showParameterChanges(model, data.model);
+        install(data.model);
+        map.training({
+          ...data.model,
+          visualizationInput: data.visualizationInput || [0, 0, 0, 0, 0],
+        });
+        stepBusy = false;
+        manualSession = true;
+        setMode("ai");
+        if (game.state === "ready") game.launch();
+        sync();
+        $("train-status").textContent =
+          "Manual · episode complete · ready for Forward";
       }
       if (data.type === "checkpoint") {
         install(data.model);
@@ -466,6 +520,7 @@ $("train").onclick = () => {
       );
     };
     worker.postMessage({
+      command: manual ? "step" : "run",
       episodes: Number($("epochs").value),
       plan,
       order: $("arena-order").value,
@@ -477,7 +532,8 @@ $("train").onclick = () => {
     stopTraining();
     notice(e.message);
   }
-};
+}
+$("train").onclick = () => beginTraining($("train-mode").value === "manual");
 $("export").onclick = () => {
   if (!model) return;
   const url = URL.createObjectURL(
@@ -859,7 +915,12 @@ $("check-device").onclick = async () => {
     $("device-status").textContent = e.message;
   }
 };
-async function startNative(plan) {
+async function startNative(plan, manual = false) {
+  trainingStarting = true;
+  manualSession = manual;
+  stepBusy = manual;
+  history = [];
+  drawChart();
   $("train").disabled = true;
   try {
     const data = await nativeRequest("/jobs", {
@@ -867,6 +928,8 @@ async function startNative(plan) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
+        mode: manual ? "manual" : "automatic",
+        device: $("training-engine").value === "native-cpu" ? "cpu" : "auto",
         plan,
         order: $("arena-order").value,
         resetWeights: $("fresh").checked,
@@ -874,7 +937,9 @@ async function startNative(plan) {
     });
     nativeJob = data.id;
     $("train").disabled = false;
-    let checkpointEpisode = -1;
+    let checkpointEpisode = -1,
+      lastStep = 0,
+      lastEvaluation = -1;
     $("train").textContent = "Stop training";
     $("train-status").textContent = "Native training · " + data.device;
     $("device-status").textContent = "Training on " + data.device;
@@ -888,7 +953,22 @@ async function startNative(plan) {
           install(state.checkpoint);
           checkpointEpisode = state.checkpointEpisode;
         }
+        if (state.manualModel && state.manualModel.episodes !== lastStep) {
+          showParameterChanges(model, state.manualModel);
+          install(state.manualModel);
+          lastStep = state.manualModel.episodes;
+          stepBusy = false;
+          setMode("ai");
+          if (game.state === "ready") game.launch();
+          sync();
+        }
         if (state.snapshot) map.training(state.snapshot);
+        if (state.framesPerSecond !== undefined)
+          $("throughput").textContent =
+            `${state.framesPerSecond.toLocaleString()} frames / sec`;
+        latestUpdates = `${state.device} · batch ${state.profile?.batchSize || "—"} · replay ${state.replaySize || 0} · ${state.updates || 0} optimizer updates`;
+        if (state.phase === "Waiting for Forward")
+          $("train-status").textContent = "Manual · ready for Forward";
         if (state.frames)
           $("samples").textContent =
             `${state.frames.toLocaleString()} simulated frames`;
@@ -896,6 +976,14 @@ async function startNative(plan) {
           `${state.episode || 0} / ${plan.reduce((s, r) => s + r.trials, 0)}`;
         $("progress").style.width =
           `${((state.episode || 0) / plan.reduce((s, r) => s + r.trials, 0)) * 100}%`;
+        if (state.byGame && state.evaluationEpisode !== lastEvaluation) {
+          lastEvaluation = state.evaluationEpisode;
+          const values = Object.values(state.byGame);
+          const mean = values.reduce((s, v) => s + v.score, 0) / values.length;
+          $("loss").innerHTML = `${mean.toFixed(0)} <small>pts</small>`;
+          history.push(mean);
+          drawChart();
+        }
         if (state.byGame)
           $("per-game-eval").textContent = Object.entries(state.byGame)
             .map(([id, v]) => `${GAMES[id].name}: ${v.score.toFixed(0)} pts`)
@@ -918,8 +1006,12 @@ async function startNative(plan) {
       }
     }, 1000);
   } catch (e) {
+    stepBusy = false;
+    manualSession = false;
+    $("train-status").textContent = "Native training could not start";
     notice(e.message);
   } finally {
+    trainingStarting = false;
     $("train").disabled = false;
   }
 }
@@ -1211,3 +1303,109 @@ $("prompt-reset-current").onclick = () => {
   invalidatePrompt();
   renderPromptControls();
 };
+
+$("auto-restart").checked = localStorage.getItem("auto-restart") !== "false";
+$("auto-restart").onchange = () =>
+  localStorage.setItem("auto-restart", $("auto-restart").checked);
+$("builder-zero-default").onclick = () => {
+  const zero = new Network(null, () => 0.5, SHAPE).serialize();
+  $("create-json").value = JSON.stringify(zero, null, 2);
+  $("create-name").value = "All-zero brain";
+  $("create-status").textContent =
+    "Exact zero draft: default layers and all 819 parameters are zero. Save to load. Hidden zero weights can remain symmetric during training; random Reset weights is optional.";
+};
+function showParameterChanges(previous, next) {
+  const before = previous ? Network.load(previous).weights.flat(2) : [],
+    after = Network.load(next).weights.flat(2);
+  let changed = 0,
+    max = 0;
+  after.forEach((v, i) => {
+    const delta = Math.abs(v - (before[i] || 0));
+    if (delta > 1e-12) {
+      changed++;
+      max = Math.max(max, delta);
+    }
+  });
+  $("parameter-changes").textContent =
+    `Displayed brain update: ${changed} / ${after.length} parameters changed · largest |Δ| ${max.toExponential(3)}. Exact zero hidden weights can stay zero through symmetry.`;
+}
+$("training-settings").onclick = () => $("settings-panel").showModal();
+$("training-stop").onclick = () => {
+  stopTraining();
+  $("train-status").textContent = "Training stopped";
+};
+$("main-train").onclick = () => {
+  if (worker || nativeJob) {
+    if (manualSession) {
+      manualSession = false;
+      $("train-mode").value = "automatic";
+      if (worker) worker.postMessage({ command: "run" });
+      else
+        nativeRequest(`/jobs/${nativeJob}/run`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        }).catch((e) => notice(e.message));
+      $("train-status").textContent = "Running at maximum speed";
+    } else {
+      if (worker) worker.postMessage({ command: "pause" });
+      else
+        nativeRequest(`/jobs/${nativeJob}/pause`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        }).catch((e) => notice(e.message));
+      manualSession = true;
+      $("train-mode").value = "manual";
+    }
+  } else beginTraining($("train-mode").value === "manual");
+};
+$("training-forward").onclick = () => {
+  if (stepBusy) return;
+  if (worker || nativeJob) {
+    if (!manualSession) {
+      $("main-train").click();
+      return;
+    }
+    stepBusy = true;
+    if (worker) worker.postMessage({ command: "step" });
+    else
+      nativeRequest(`/jobs/${nativeJob}/step`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }).catch((e) => {
+        stepBusy = false;
+        notice(e.message);
+      });
+  } else {
+    $("train-mode").value = "manual";
+    beginTraining(true);
+  }
+};
+setInterval(() => {
+  $("monitor-status").textContent = $("train-status").textContent;
+  $("monitor-trials").textContent = $("epoch").textContent;
+  $("monitor-speed").textContent = $("throughput").textContent;
+  $("monitor-score").textContent = "Evaluation: " + $("loss").textContent;
+  $("monitor-details").textContent = [
+    $("per-game-eval").textContent,
+    $("samples").textContent,
+    latestUpdates,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  $("main-chart").getContext("2d").clearRect(0, 0, 400, 70);
+  $("main-chart").getContext("2d").drawImage($("chart"), 0, 0, 400, 70);
+  $("main-train").textContent =
+    worker || nativeJob
+      ? manualSession
+        ? "Run at maximum speed"
+        : "Pause for manual stepping"
+      : $("train-mode").value === "manual"
+        ? "Start manual training"
+        : "Run at maximum speed";
+  $("training-forward").disabled = stepBusy || trainingStarting;
+  $("main-train").disabled = trainingStarting;
+  $("training-stop").disabled = trainingStarting;
+}, 250);

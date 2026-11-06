@@ -1,4 +1,4 @@
-# Breakout Lab
+# Neural Network and LLMs
 
 Play Breakout with your keyboard, train a tiny network with **reinforcement learning in fast-forwarded simulations**, then watch its saved policy play live. Edit individual weights, biases, and hidden-neuron counts and immediately try the result.
 
@@ -143,3 +143,30 @@ Open **My Brains → Add Brain**. You can:
 **Copy LLM prompt** generates a prompt for the currently selected game and, by default, the live model's exact architecture. **View prompt** exposes the complete text, including a manual-copy fallback if clipboard permission is unavailable. The prompt includes exact observations/scaling, action timing and tie-breaking, collisions and game rules, network equations, schema constraints, a full valid zero-filled JSON template, and the current game source. It explicitly asks the LLM to choose and write every numeric weight itself and forbids tools, internet, browsing, computer/code execution, simulation, training, optimization, or programs that generate weights. It requests only a complete literal JSON object and makes no claim of trained performance.
 
 The prompt defaults to the live model’s hidden-layer count and widths (for the bundled model: **5 → 24 → 24 → 3**). Choose **Customize layers and neuron counts** to add/remove prompt layers and set their widths independently of the scratch builder. The summary shows the requested architecture and parameter count before copying. **Reset to current model** restores its hidden widths. The supported range is 1–6 hidden layers, each 1–64 neurons. Paste the LLM response into Add Brain, validate, name it, and load it. The app validates the model's structure and values; it cannot establish whether an external LLM actually obeyed the no-tools instruction. Fine-tuning is an explicit later step in the arena.
+
+## Main-window learning controls
+
+The site is **Neural Network and LLMs**. Training status now stays beside the network map: trial progress, evaluation chart, per-game scores, simulation throughput, replay warmup, optimizer update count, and parameter changes. The arena configuration remains under Settings; **Configure arena** opens it without changing the live workspace.
+
+Select **Auto** for maximum-speed simulation or **Manual** for one complete training game per **Forward** press. A simulation ends on a miss, a win, or the 3,600-frame trial limit. Manual stepping retains replay memory, target weights, and Adam state across clicks; it is not repeated fresh training jobs. **Run at maximum speed** resumes the same session. **Pause for manual stepping** pauses at an episode boundary. **Stop** ends that session; the displayed brain remains loaded. Native training supports the same controls. Manual mode evaluates each completed episode, displays its current weights (rather than an older best checkpoint), and lets that updated brain control the visible game.
+
+The exact-zero option is **My Brains → Add Brain → All-zero brain · default 5 → 24 → 24 → 3**. It creates all 819 weights and biases as literal zero. Saving loads that exact brain. Training a completely zero tanh network cannot initially learn input-dependent hidden features: output biases can change while hidden weights remain zero because their gradients are zero. This is shown honestly in the parameter counts; no random noise is secretly injected. Choose **Reset weights** if you explicitly want to break symmetry using random initialization. Manual mode starts learning once 32 transitions are available; automatic mode warms up with 512. The replay counter explains any step that only gathers data.
+
+**Auto-restart after win / loss** is enabled by default and saved in the browser. After a short pause, the live game resets all lives, score, ball, and bricks, then launches using the same brain. Disable it to inspect a finished game. Paused playback does not automatically advance to a new game. Training episodes remain separate from this live-game setting.
+
+## Native GPU performance diagnostics
+
+Automatic MPS/CUDA training now averages **512 samples every 64 environment decisions**, rather than launching a 32-sample update every four decisions. Both schedules consume eight replay samples per new transition, but the larger batches make 16 times fewer optimizer launches and change the optimization trajectory. Monitor evaluation score, not only frames/sec. Manual mode deliberately uses 32-sample updates for close inspection.
+
+The native replay buffer is a ring list sampled directly; it no longer converts the entire 30,000-item buffer to a list for every update. A batch packs all fields into one host-to-device transfer. Actor refresh and JSON snapshots flatten parameters for a single device-to-host transfer, avoiding one synchronization per layer tensor; automatic snapshots are rate-limited. There is no per-update GPU loss readback. Target/actor refresh frequency is tied to environment decisions. These changes reduce launch, copy, and synchronization overhead; CPU game physics still sets a throughput ceiling, and an 819-parameter model can remain too small for a GPU to beat every CPU configuration.
+
+Use **Native · force CPU (comparison)** to compare native CPU training with auto-device training on the same machine. The live panel reports the actual device, batch size, update count, and end-to-end frames/sec. The browser JavaScript CPU worker is a separate implementation, so comparing it with native MPS includes Python-versus-JavaScript simulation costs as well as GPU computation.
+
+For a synchronized learner benchmark on your Mac:
+
+```sh
+source .venv/bin/activate
+python3 backend/benchmark.py --device all --samples 16384
+```
+
+This warms up kernels first and synchronizes the device around timing. It prints real CPU/MPS/CUDA samples/sec for batch sizes 32 and 512 using the same sample budget; it excludes game physics and performs fewer Adam updates at the larger batch size. `--hidden 64,64` tests a larger network. This environment has no Apple GPU: optimized native CPU and all manual controls were tested here, while MPS speed must be measured on your Mac. Restart both Node and the Python service after pulling these changes.

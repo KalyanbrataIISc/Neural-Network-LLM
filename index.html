@@ -4,16 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#101313" />
-    <title>Breakout Lab — Learn by playing</title>
+    <title>Neural Network and LLMs</title>
     <link rel="stylesheet" href="/src/style.css" />
     <link rel="stylesheet" href="/src/workbench.css" />
   </head>
   <body>
     <main>
       <header>
-        <a class="brand" href="/" aria-label="Breakout Lab home"
-          ><span class="brand-icon">▥</span> BREAKOUT<span class="muted">
-            / LAB</span
+        <a class="brand" href="/" aria-label="Neural Network and LLMs home"
+          ><span class="brand-icon">▥</span> Neural Network<span class="muted">
+            and LLMs</span
           ></a
         ><button id="brains-open">My Brains</button
         ><span class="local"
@@ -44,6 +44,10 @@
               <option value="breakout">Breakout</option>
               <option value="catch">Catch</option>
             </select></label
+          >
+          <label class="restart-option"
+            ><input id="auto-restart" type="checkbox" checked /> Auto-restart
+            after win / loss</label
           >
           <div class="panel-top">
             <div class="tabs" aria-label="Paddle controller">
@@ -120,6 +124,37 @@
               </select></label
             ><button id="step-layer">Step layer →</button>
           </div>
+          <section class="training-monitor">
+            <div class="monitor-buttons">
+              <label
+                >Train<select id="train-mode">
+                  <option value="automatic">Auto · maximum speed</option>
+                  <option value="manual">Manual · one game per Forward</option>
+                </select></label
+              ><button id="main-train">Start training</button
+              ><button id="training-forward">Forward · 1 game →</button
+              ><button id="training-stop">Stop</button
+              ><button id="training-settings">Configure arena</button>
+            </div>
+            <div class="monitor-stats">
+              <strong id="monitor-status">Ready to train</strong
+              ><span id="monitor-trials">0 trials</span
+              ><span id="monitor-speed">0 frames / sec</span
+              ><span id="monitor-score">Evaluation: —</span>
+            </div>
+            <div class="monitor-learning">
+              <canvas
+                id="main-chart"
+                width="400"
+                height="70"
+                aria-label="Training evaluation score over time"
+              ></canvas>
+              <p id="monitor-details">
+                Start Auto or press Forward to train one complete simulation.
+              </p>
+            </div>
+            <p id="parameter-changes"></p>
+          </section>
           <div class="graph-area">
             <canvas
               id="network-map"
@@ -187,7 +222,9 @@
             Zero initialization is for manual construction. Use random values or
             Reset weights before training.
           </p>
-          <button id="builder-generate">Generate JSON draft</button
+          <button id="builder-zero-default">
+            All-zero brain · default 5 → 24 → 24 → 3</button
+          ><button id="builder-generate">Generate JSON draft</button
           ><button id="builder-map">Create & edit on map</button>
         </section>
         <section>
@@ -301,6 +338,7 @@
         ><label
           >Training engine<select id="training-engine">
             <option value="browser">Browser · CPU worker</option>
+            <option value="native-cpu">Native · force CPU (comparison)</option>
             <option value="native">Native · auto GPU (MPS / CUDA)</option>
           </select></label
         >

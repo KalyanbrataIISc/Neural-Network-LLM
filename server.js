@@ -18,7 +18,11 @@ http
           return;
         }
         const suffix = req.url.slice("/api/native".length);
-        if (!/^\/(status|jobs(?:\/[a-f0-9]{32})?)$/.test(suffix)) {
+        if (
+          !/^\/(status|jobs(?:\/[a-f0-9]{32}(?:\/(?:step|run|pause))?)?)$/.test(
+            suffix,
+          )
+        ) {
           res.writeHead(404).end();
           return;
         }
@@ -75,5 +79,7 @@ http
     }
   })
   .listen(Number(process.env.PORT || 3000), "0.0.0.0", () =>
-    console.log("Breakout Lab: http://localhost:" + (process.env.PORT || 3000)),
+    console.log(
+      "Neural Network and LLMs: http://localhost:" + (process.env.PORT || 3000),
+    ),
   );

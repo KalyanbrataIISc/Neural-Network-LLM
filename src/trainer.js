@@ -55,7 +55,7 @@ export function evaluate(
   }
   return { score: score / games, hits: hits / games };
 }
-export function train({
+export function* trainingSession({
   episodes = 2500,
   onProgress = () => {},
   onCheckpoint = () => {},
@@ -65,6 +65,7 @@ export function train({
   plan = null,
   order = "interleaved",
   gameId = "breakout",
+  isManual = () => false,
 } = {}) {
   if (!Number.isInteger(episodes) || episodes < 1 || episodes > 100000)
     throw new Error("Choose between 1 and 100,000 episodes.");
@@ -106,7 +107,7 @@ export function train({
   const report = (episode) =>
     onProgress({
       snapshot:
-        episode % 10 === 0
+        episode % 10 === 0 || isManual()
           ? {
               ...network.serialize(),
               visualizationInput: Array.from(network.activations[0]),
@@ -122,6 +123,9 @@ export function train({
       frames,
       epsilon,
       loss: updates ? loss / updates : 0,
+      replaySize: count,
+      updates: network.updates,
+      warmup: isManual() ? BATCH : 512,
       framesPerSecond: Math.round(
         frames / Math.max(0.001, (performance.now() - started) / 1000),
       ),
@@ -175,7 +179,7 @@ export function train({
       steps++;
       frames += result.frames;
       episodeReward += result.reward;
-      if (count >= 512 && steps % 4 === 0) {
+      if (count >= (isManual() ? BATCH : 512) && steps % 4 === 0) {
         network.clearGradients();
         for (let j = 0; j < BATCH; j++) {
           const s = replay[Math.floor(random() * count)];
@@ -194,7 +198,7 @@ export function train({
     completed[trials[episode - 1]]++;
     recent.push(episodeReward);
     if (recent.length > 100) recent.shift();
-    if (episode % 100 === 0 || episode === episodes) {
+    if (episode % 100 === 0 || episode === episodes || isManual()) {
       evaluation = evaluateAll(network);
       if (
         evaluation.score > best ||
@@ -210,7 +214,36 @@ export function train({
         onCheckpoint(checkpointData(episode));
       }
     }
-    if (episode % 10 === 0 || episode === episodes) report(episode);
+    if (episode % 10 === 0 || episode === episodes || isManual())
+      report(episode);
+    yield {
+      episode,
+      visualizationInput: Array.from(network.activations[0]),
+      model: {
+        ...network.serialize(),
+        observationSchema: OBSERVATION_SCHEMA,
+        episodes: episode,
+        frames,
+        score: evaluation.score,
+        trainingPlan: plan,
+        order,
+        completedTrials: { ...completed },
+        trainingHistory: [
+          ...(initialModel?.trainingHistory || []),
+          { plan, order, completed: { ...completed } },
+        ],
+      },
+    };
   }
   return checkpointData(episodes);
+}
+
+// The CLI drains the same persistent session; the browser can advance it once.
+export function train(options = {}) {
+  const session = trainingSession(options);
+  let step;
+  do {
+    step = session.next();
+  } while (!step.done);
+  return step.value;
 }

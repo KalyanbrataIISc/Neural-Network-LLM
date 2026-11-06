@@ -457,9 +457,13 @@ export class NetworkMap {
               ? " ← chosen"
               : ""),
           n.layer === 0 ? 5 : w - 5,
-          n.y - 16,
+          n.y - (n.layer === 0 ? 6 : 14),
         );
-        c.fillText(v.toFixed(3), n.layer === 0 ? 5 : w - 5, n.y + 24);
+        c.fillText(
+          v.toFixed(3),
+          n.layer === 0 ? 5 : w - 5,
+          n.y + (n.layer === 0 ? 8 : 17),
+        );
       }
     }
     c.font = "10px system-ui";

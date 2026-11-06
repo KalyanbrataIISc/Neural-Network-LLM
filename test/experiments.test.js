@@ -147,3 +147,30 @@ test("prompt templates preserve the exact requested architecture", async () => {
     assert.equal(template.layers.length, shape.length - 1);
   }
 });
+
+test("manual training advances exactly one episode and retains replay and optimizer state", async () => {
+  const { trainingSession } = await import("../src/trainer.js");
+  const initialModel = new Network(null, () => 0.5).serialize(),
+    progress = [];
+  const session = trainingSession({
+    episodes: 3,
+    isManual: () => true,
+    initialModel,
+    onProgress: (p) => progress.push(p),
+  });
+  const first = session.next();
+  assert.equal(first.value.episode, 1);
+  assert.ok(progress.at(-1).updates > 0);
+  assert.ok(first.value.model.layers.at(-1).neurons.some((n) => n.bias !== 0));
+  assert.ok(
+    first.value.model.layers[0].neurons.every(
+      (n) => n.bias === 0 && Object.values(n.weights).every((w) => w === 0),
+    ),
+  );
+  const replay = progress.at(-1).replaySize,
+    updates = progress.at(-1).updates;
+  const second = session.next();
+  assert.equal(second.value.episode, 2);
+  assert.ok(progress.at(-1).replaySize > replay);
+  assert.ok(progress.at(-1).updates > updates);
+});
