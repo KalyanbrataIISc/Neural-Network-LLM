@@ -1,5 +1,6 @@
+import { createGame, schedule, OBSERVATION_SCHEMA } from "./games.js";
 import { Network, rng, ACTIONS } from "./network.js";
-import { Game, inputs, W } from "./game.js";
+import { inputs, W } from "./game.js";
 export const ACTION_FRAMES = 4,
   GAMMA = 0.99;
 const CAPACITY = 30000,
@@ -26,8 +27,8 @@ export function transition(game, action) {
     0.025 * (game.ball.vy > 0 ? Math.abs(game.ball.x - game.paddle) / W : 0);
   return { reward, done, frames };
 }
-function newEpisode(random) {
-  const g = new Game(random);
+function newEpisode(random, gameId = "breakout") {
+  const g = createGame(gameId, random);
   g.fast = true;
   g.paddle = 80 + random() * (W - 160);
   g.serve();
@@ -35,11 +36,16 @@ function newEpisode(random) {
   return g;
 }
 // Evaluation uses fixed held-out seeds, no exploration and no parameter updates.
-export function evaluate(network, games = 5, maxFrames = 3600) {
+export function evaluate(
+  network,
+  games = 5,
+  maxFrames = 3600,
+  gameId = "breakout",
+) {
   let score = 0,
     hits = 0;
   for (let i = 0; i < games; i++) {
-    const g = newEpisode(rng(9000 + i));
+    const g = newEpisode(rng(9000 + i), gameId);
     for (let frames = 0; frames < maxFrames; frames += ACTION_FRAMES) {
       const t = transition(g, network.action(inputs(g.ball, g.paddle)));
       if (t.done) break;
@@ -56,9 +62,27 @@ export function train({
   initialModel = null,
   resetWeights = false,
   seed = 2026,
+  plan = null,
+  order = "interleaved",
+  gameId = "breakout",
 } = {}) {
   if (!Number.isInteger(episodes) || episodes < 1 || episodes > 100000)
     throw new Error("Choose between 1 and 100,000 episodes.");
+  plan = plan || [{ game: gameId, trials: episodes }];
+  const trials = schedule(plan, order);
+  episodes = trials.length;
+  const completed = Object.fromEntries(plan.map((r) => [r.game, 0]));
+  const evaluateAll = (net) => {
+    const byGame = Object.fromEntries(
+      plan.map((r) => [r.game, evaluate(net, 5, 3600, r.game)]),
+    );
+    const values = Object.values(byGame);
+    return {
+      byGame,
+      score: values.reduce((s, v) => s + v.score, 0) / values.length,
+      hits: values.reduce((s, v) => s + v.hits, 0) / values.length,
+    };
+  };
   const random = rng(seed),
     network =
       initialModel && !resetWeights
@@ -76,7 +100,7 @@ export function train({
     loss = 0,
     updates = 0;
   const started = performance.now();
-  let evaluation = evaluate(network),
+  let evaluation = evaluateAll(network),
     recent = [],
     epsilon = initialModel && !resetWeights ? 0.2 : 1;
   const report = (episode) =>
@@ -90,6 +114,9 @@ export function train({
           : null,
       episode,
       episodes,
+      currentGame: trials[Math.max(0, episode - 1)],
+      completed: { ...completed },
+      byGame: evaluation.byGame,
       score: evaluation.score,
       hits: evaluation.hits,
       frames,
@@ -106,6 +133,14 @@ export function train({
   const decay = 25000;
   const checkpointData = (episode) => ({
     ...checkpoint,
+    observationSchema: OBSERVATION_SCHEMA,
+    trainingPlan: plan,
+    order,
+    completedTrials: { ...completed },
+    trainingHistory: [
+      ...(initialModel?.trainingHistory || []),
+      { plan, order, completed: { ...completed } },
+    ],
     trainedAt: new Date().toISOString(),
     episodes: episode,
     frames,
@@ -115,7 +150,7 @@ export function train({
     actionFrames: ACTION_FRAMES,
   });
   for (let episode = 1; episode <= episodes; episode++) {
-    const game = newEpisode(random);
+    const game = newEpisode(random, trials[episode - 1]);
     let episodeReward = 0;
     for (let t = 0; t < 900; t++) {
       const state = inputs(game.ball, game.paddle);
@@ -156,10 +191,11 @@ export function train({
       }
       if (result.done) break;
     }
+    completed[trials[episode - 1]]++;
     recent.push(episodeReward);
     if (recent.length > 100) recent.shift();
     if (episode % 100 === 0 || episode === episodes) {
-      evaluation = evaluate(network);
+      evaluation = evaluateAll(network);
       if (
         evaluation.score > best ||
         (evaluation.score === best &&

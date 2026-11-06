@@ -3,6 +3,9 @@ self.onmessage = ({ data }) => {
   try {
     const model = train({
       episodes: data.episodes,
+      plan: data.plan,
+      order: data.order,
+      gameId: data.gameId,
       initialModel: data.model,
       resetWeights: data.resetWeights,
       onCheckpoint: (model) => self.postMessage({ type: "checkpoint", model }),

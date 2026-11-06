@@ -1,11 +1,18 @@
+import { brainPrompt, parseBrainJSON } from "./brain-prompt.js";
+import { BrainStore } from "./brains.js";
+import { createGame, GAMES, schedule } from "./games.js";
 import { NetworkMap } from "./network-map.js";
-import { Game, W, H, R, PADDLE_W, PADDLE_Y, inputs } from "./game.js";
+import { W, H, R, PADDLE_W, PADDLE_Y, inputs } from "./game.js";
 import { Network, ACTIONS, INPUT_NAMES, neuronNames } from "./network.js";
 import { ACTION_FRAMES } from "./trainer.js";
 const $ = (id) => document.getElementById(id),
-  game = new Game(),
   ctx = $("game").getContext("2d"),
   chart = $("chart").getContext("2d");
+let game = createGame("breakout");
+const brains = new BrainStore(localStorage);
+let activeBrain = localStorage.getItem("active-brain"),
+  nativeJob = null,
+  nativePoll = null;
 const STORAGE = "breakout-lab-dqn-v2";
 let mode = "human",
   model = null,
@@ -25,7 +32,7 @@ let mode = "human",
 const map = new NetworkMap($("network-map"), {
   getNetwork: () => network,
   commit: (next) => {
-    if (worker) {
+    if (worker || nativeJob) {
       stopTraining();
       notice("Training stopped to preserve your live edit.");
     }
@@ -69,10 +76,28 @@ function install(data, persist = true) {
   aiTicks = 0;
   map.reset();
   const count = network.weights.flat(2).length;
-  $("experiment-shape").textContent =
-    `${network.shape[0]} INPUTS → ${network.shape[1]} → ${network.shape[2]} → ${network.shape[3]} ACTIONS`;
-  $("hidden-1-count").textContent = network.shape[1];
-  $("hidden-2-count").textContent = network.shape[2];
+  $("experiment-shape").textContent = network.shape.join(" → ");
+  const architecture = document.querySelector(".architecture");
+  architecture.replaceChildren();
+  network.shape.forEach((size, i) => {
+    if (i) {
+      const arrow = document.createElement("em");
+      arrow.textContent = "→";
+      architecture.append(arrow);
+    }
+    const column = document.createElement("div"),
+      countLabel = document.createElement("b"),
+      kind = document.createElement("span");
+    countLabel.textContent = size;
+    kind.textContent =
+      i === 0
+        ? "INPUTS"
+        : i === network.shape.length - 1
+          ? "ACTIONS"
+          : `HIDDEN ${i}`;
+    column.append(countLabel, kind);
+    architecture.append(column);
+  });
   $("parameter-count").textContent = `${count} parameters`;
   $("model-title").textContent = "Your paddle has a brain.";
   $("model-info").textContent =
@@ -81,6 +106,15 @@ function install(data, persist = true) {
   $("deploy").disabled = false;
   $("export").disabled = false;
   $("inspect").disabled = false;
+  if (!brains.records.length && !localStorage.getItem("brains-seeded")) {
+    try {
+      const b = brains.save("Starter · Breakout", data);
+      activateBrain(b.id);
+      localStorage.setItem("brains-seeded", "1");
+    } catch (e) {
+      notice(e.message);
+    }
+  }
 }
 try {
   const saved = localStorage.getItem(STORAGE);
@@ -179,7 +213,8 @@ $("game").addEventListener("pointerdown", (e) => {
 $("game").addEventListener("pointerup", () => (target = null));
 function sync() {
   $("score").textContent = String(game.score).padStart(4, "0");
-  $("bricks").textContent = game.bricks.filter((b) => b.alive).length;
+  $("bricks").textContent =
+    game.id === "catch" ? game.hits : game.bricks.filter((b) => b.alive).length;
   $("lives").textContent = "● ".repeat(game.lives).trim() || "—";
   $("pause").textContent =
     game.state === "playing"
@@ -298,7 +333,8 @@ function frame(t) {
     }
   }
   $("score").textContent = String(game.score).padStart(4, "0");
-  $("bricks").textContent = game.bricks.filter((b) => b.alive).length;
+  $("bricks").textContent =
+    game.id === "catch" ? game.hits : game.bricks.filter((b) => b.alive).length;
   if (mode === "human" && network && Number($("speed").value) > 0) {
     network.predict(inputs(game.ball, game.paddle));
     map.capture(network);
@@ -333,6 +369,13 @@ function drawChart() {
 }
 function stopTraining() {
   worker?.terminate();
+  if (nativeJob) {
+    fetch(`/api/native/jobs/${nativeJob}`, { method: "DELETE" }).catch(
+      () => {},
+    );
+    nativeJob = null;
+    clearInterval(nativePoll);
+  }
   worker = null;
   map.endTraining();
   $("train").innerHTML = "✧ <span>Train neural network</span><span>↗</span>";
@@ -345,9 +388,20 @@ $("epochs").onchange = () => {
       `0 / ${Number($("epochs").value).toLocaleString()}`;
 };
 $("train").onclick = () => {
-  if (worker) {
+  if (worker || nativeJob) {
     stopTraining();
     $("train-status").textContent = "Training stopped";
+    return;
+  }
+  let plan;
+  try {
+    plan = trainingPlan();
+  } catch (e) {
+    notice(e.message);
+    return;
+  }
+  if ($("training-engine").value === "native") {
+    startNative(plan);
     return;
   }
   history = [];
@@ -363,6 +417,10 @@ $("train").onclick = () => {
     worker.onmessage = ({ data }) => {
       if (data.type === "progress") {
         if (data.snapshot) map.training(data.snapshot);
+        if (data.byGame)
+          $("per-game-eval").textContent = Object.entries(data.byGame)
+            .map(([id, v]) => `${GAMES[id].name}: ${v.score.toFixed(0)} pts`)
+            .join(" · ");
         if (data.episode % 100 === 0 || data.episode === data.episodes) {
           history.push(data.score);
           drawChart();
@@ -409,6 +467,9 @@ $("train").onclick = () => {
     };
     worker.postMessage({
       episodes: Number($("epochs").value),
+      plan,
+      order: $("arena-order").value,
+      gameId: game.id,
       model,
       resetWeights: $("fresh").checked,
     });
@@ -435,8 +496,16 @@ $("file").onchange = async () => {
   try {
     if (file.size > 1500000) throw new Error("Weight file is too large.");
     const data = JSON.parse(await file.text());
+    const entry = brains.save(
+      data.brainName || file.name.replace(/\.json$/i, ""),
+      data,
+    );
+    activateBrain(entry.id);
+    renderBrains();
     install(data);
-    notice("Weights imported. Your network is ready to play.");
+    notice(
+      "Brain imported and saved. Weights imported. Your network is ready to play.",
+    );
   } catch (e) {
     notice("Could not import weights: " + e.message);
   }
@@ -447,15 +516,25 @@ drawChart();
 requestAnimationFrame(frame);
 
 function inspectNetwork() {
+  if ($("inspect-layer").options.length !== draft.layers.length) {
+    $("inspect-layer").replaceChildren(
+      ...draft.layers.map(
+        (l, i) =>
+          new Option(`${l.name} · ${l.neurons.length} neurons`, String(i)),
+      ),
+    );
+  }
   const layer = Number($("inspect-layer").value),
     data = draft.layers[layer],
     names = layer === 0 ? INPUT_NAMES : neuronNames(layer - 1, draft.shape);
   $("structure-summary").textContent =
     `${draft.shape.join(" → ")} · ${draft.layers.reduce((n, l) => n + l.neurons.reduce((s, v) => s + Object.keys(v.weights).length + 1, 0), 0)} parameters`;
-  $("add-neuron").disabled = layer === 2 || draft.shape[layer + 1] >= 64;
-  $("remove-neuron").disabled = layer === 2 || draft.shape[layer + 1] <= 1;
+  $("add-neuron").disabled =
+    layer === draft.layers.length - 1 || draft.shape[layer + 1] >= 64;
+  $("remove-neuron").disabled =
+    layer === draft.layers.length - 1 || draft.shape[layer + 1] <= 1;
   $("neuron-equation").textContent =
-    layer < 2
+    layer < draft.layers.length - 1
       ? "Each neuron = tanh(sum(input × weight) + bias)"
       : "Each Q value = sum(input × weight) + bias. The largest value selects the action.";
   const table = $("weight-table");
@@ -518,10 +597,13 @@ $("model-json").oninput = () => {
   $("editor-status").textContent =
     "JSON draft changed. Apply edits to validate and run it.";
 };
+function currentOutputLayer() {
+  return draft.layers.length - 1;
+}
 function changeNeurons(add) {
   try {
     const layer = Number($("inspect-layer").value);
-    if (layer === 2) return;
+    if (layer === currentOutputLayer()) return;
     const current = Network.load(
         jsonDirty ? JSON.parse($("model-json").value) : draft,
       ),
@@ -563,7 +645,7 @@ $("apply-model").onclick = () => {
     const next = Network.load(
       jsonDirty ? JSON.parse($("model-json").value) : draft,
     ).serialize();
-    if (worker) {
+    if (worker || nativeJob) {
       stopTraining();
       $("train-status").textContent = "Training stopped for manual edits";
     }
@@ -586,7 +668,7 @@ $("reload-model").onclick = async () => {
     if (!r.ok) throw new Error("Project weights not found.");
     const data = await r.json();
     Network.load(data);
-    if (worker) stopTraining();
+    if (worker || nativeJob) stopTraining();
     install(data);
     draft = network.serialize();
     inspectNetwork();
@@ -630,4 +712,410 @@ divider.onkeydown = (e) => {
         (e.key === "ArrowRight" ? 2 : -2),
     );
   }
+};
+
+$("game-select").onchange = () => {
+  game = createGame($("game-select").value);
+  $("object-label").textContent = game.id === "catch" ? "CAUGHT" : "BRICKS";
+  $("brick-total").hidden = game.id === "catch";
+  sync();
+  notice(`Same brain, new task: ${GAMES[game.id].name}.`);
+};
+function activateBrain(id) {
+  activeBrain = id;
+  if (id) localStorage.setItem("active-brain", id);
+  else localStorage.removeItem("active-brain");
+}
+function renderBrains() {
+  const list = $("brain-list");
+  list.replaceChildren();
+  $("brain-update").disabled =
+    !activeBrain || !brains.records.some((b) => b.id === activeBrain);
+  for (const brain of brains.records) {
+    const card = document.createElement("article");
+    card.className = "brain-card";
+    const name = document.createElement("input");
+    name.value = brain.name;
+    name.maxLength = 80;
+    name.setAttribute("aria-label", "Rename " + brain.name);
+    name.onchange = () => {
+      try {
+        const renamed = brains.rename(brain.id, name.value);
+        brain.name = renamed.name;
+        $("brain-status").textContent = "Renamed.";
+      } catch (e) {
+        $("brain-status").textContent = e.message;
+      }
+    };
+    const info = document.createElement("p");
+    info.textContent = `${brain.model.shape.join(" → ")} · ${brain.id === activeBrain ? "Loaded · " : ""}${new Date(brain.updatedAt).toLocaleString()} · ${brain.model.observationSchema || "paddle-tracking-v1"}`;
+    card.append(name, info);
+    for (const [label, action] of [
+      [
+        "Load / edit",
+        () => {
+          if (worker || nativeJob) stopTraining();
+          install(brain.model);
+          activateBrain(brain.id);
+          $("brains-panel").close();
+          renderBrains();
+          notice(
+            "Brain loaded. Edit it on the live map; save updates in My Brains.",
+          );
+        },
+      ],
+      [
+        "Export JSON",
+        () =>
+          downloadBrain({ ...brain.model, brainName: brain.name }, brain.name),
+      ],
+      [
+        "Delete",
+        () => {
+          brains.delete(brain.id);
+          if (activeBrain === brain.id) activateBrain(null);
+          renderBrains();
+          $("brain-status").textContent =
+            "Deleted from library. The current live model remains available.";
+        },
+      ],
+    ]) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.onclick = () => {
+        try {
+          action();
+        } catch (e) {
+          $("brain-status").textContent = e.message;
+        }
+      };
+      card.append(b);
+    }
+    list.append(card);
+  }
+}
+function downloadBrain(data, name) {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+  );
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name.replace(/[^a-z0-9_-]/gi, "_") + ".json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+$("brains-open").onclick = () => {
+  renderBrains();
+  $("brains-panel").showModal();
+};
+$("brains-close").onclick = () => $("brains-panel").close();
+$("brain-save").onclick = () => {
+  try {
+    if (!model) throw new Error("Load a network first.");
+    const b = brains.save($("brain-name").value, model);
+    activateBrain(b.id);
+    renderBrains();
+    $("brain-status").textContent = "Brain saved.";
+  } catch (e) {
+    $("brain-status").textContent = e.message;
+  }
+};
+$("brain-update").onclick = () => {
+  try {
+    const b = brains.get(activeBrain);
+    brains.save(b.name, model, b.id);
+    renderBrains();
+    $("brain-status").textContent =
+      "Loaded brain updated with the live weights.";
+  } catch (e) {
+    $("brain-status").textContent = e.message;
+  }
+};
+$("brain-import").onclick = () => $("file").click();
+function trainingPlan() {
+  const plan = $("arena-enabled").checked
+    ? Object.keys(GAMES)
+        .map((id) => ({ game: id, trials: Number($("trials-" + id).value) }))
+        .filter((r) => r.trials !== 0)
+    : [{ game: game.id, trials: Number($("epochs").value) }];
+  schedule(plan, $("arena-order").value);
+  return plan;
+}
+async function nativeRequest(path, options) {
+  const r = await fetch("/api/native" + path, options);
+  const data = await r.json();
+  if (!r.ok)
+    throw new Error(
+      data.error || "Native service unavailable. See README setup.",
+    );
+  return data;
+}
+$("check-device").onclick = async () => {
+  try {
+    const data = await nativeRequest("/status");
+    $("device-status").textContent =
+      `Native device: ${data.device} · ${data.name}`;
+  } catch (e) {
+    $("device-status").textContent = e.message;
+  }
+};
+async function startNative(plan) {
+  $("train").disabled = true;
+  try {
+    const data = await nativeRequest("/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        plan,
+        order: $("arena-order").value,
+        resetWeights: $("fresh").checked,
+      }),
+    });
+    nativeJob = data.id;
+    $("train").disabled = false;
+    let checkpointEpisode = -1;
+    $("train").textContent = "Stop training";
+    $("train-status").textContent = "Native training · " + data.device;
+    $("device-status").textContent = "Training on " + data.device;
+    nativePoll = setInterval(async () => {
+      try {
+        if (!nativeJob) return;
+        const id = nativeJob;
+        const state = await nativeRequest("/jobs/" + id);
+        if (nativeJob !== id) return;
+        if (state.checkpoint && state.checkpointEpisode !== checkpointEpisode) {
+          install(state.checkpoint);
+          checkpointEpisode = state.checkpointEpisode;
+        }
+        if (state.snapshot) map.training(state.snapshot);
+        if (state.frames)
+          $("samples").textContent =
+            `${state.frames.toLocaleString()} simulated frames`;
+        $("epoch").textContent =
+          `${state.episode || 0} / ${plan.reduce((s, r) => s + r.trials, 0)}`;
+        $("progress").style.width =
+          `${((state.episode || 0) / plan.reduce((s, r) => s + r.trials, 0)) * 100}%`;
+        if (state.byGame)
+          $("per-game-eval").textContent = Object.entries(state.byGame)
+            .map(([id, v]) => `${GAMES[id].name}: ${v.score.toFixed(0)} pts`)
+            .join(" · ");
+        if (state.status === "complete") {
+          install(state.model);
+          nativeJob = null;
+          clearInterval(nativePoll);
+          stopTraining();
+          $("train-status").textContent =
+            "Native training complete · weights saved";
+          notice(
+            "Native training complete. Save your experiment in My Brains.",
+          );
+        }
+        if (state.status === "error") throw new Error(state.error);
+      } catch (e) {
+        stopTraining();
+        notice(e.message);
+      }
+    }, 1000);
+  } catch (e) {
+    notice(e.message);
+  } finally {
+    $("train").disabled = false;
+  }
+}
+
+let builderWidths = [4];
+function builderShape() {
+  if (
+    !builderWidths.length ||
+    builderWidths.length > 6 ||
+    builderWidths.some((n) => !Number.isInteger(n) || n < 1 || n > 64)
+  )
+    throw new Error("Choose 1–6 hidden layers with 1–64 neurons each.");
+  return [5, ...builderWidths, 3];
+}
+function renderBuilder() {
+  const list = $("builder-layers");
+  list.replaceChildren();
+  builderWidths.forEach((width, i) => {
+    const row = document.createElement("div");
+    row.className = "builder-row";
+    const label = document.createElement("label");
+    label.textContent = `Hidden layer ${i + 1}`;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = 1;
+    input.max = 64;
+    input.step = 1;
+    input.value = width;
+    input.setAttribute("aria-label", `Hidden layer ${i + 1} neuron count`);
+    input.oninput = () => (builderWidths[i] = Number(input.value));
+    label.append(input);
+    const remove = document.createElement("button");
+    remove.textContent = "Remove";
+    remove.disabled = builderWidths.length === 1;
+    remove.onclick = () => {
+      builderWidths.splice(i, 1);
+      renderBuilder();
+    };
+    row.append(label, remove);
+    list.append(row);
+  });
+  $("builder-add-layer").disabled = builderWidths.length >= 6;
+}
+function showCreate() {
+  if ($("brains-panel").open) $("brains-panel").close();
+  $("create-status").textContent = "";
+  renderBuilder();
+  $("brain-create").showModal();
+}
+$("brain-add").onclick = showCreate;
+$("create-close").onclick = () => $("brain-create").close();
+$("builder-add-layer").onclick = () => {
+  builderWidths.push(4);
+  renderBuilder();
+};
+function generateDraft() {
+  const next = new Network(
+    null,
+    $("builder-init").value === "zero" ? () => 0.5 : Math.random,
+    builderShape(),
+  ).serialize();
+  $("create-json").value = JSON.stringify(next, null, 2);
+  $("create-status").textContent =
+    "Draft generated. You can edit every number below, save it, or continue on the map.";
+  return next;
+}
+$("builder-generate").onclick = () => {
+  try {
+    generateDraft();
+  } catch (e) {
+    $("create-status").textContent = e.message;
+  }
+};
+function saveCreated(data) {
+  Network.load(data);
+  const entry = brains.save($("create-name").value, data);
+  if (worker || nativeJob) stopTraining();
+  install(data);
+  activateBrain(entry.id);
+  renderBrains();
+  $("brain-create").close();
+  notice(
+    "Brain saved and loaded. Drag neurons/connections or right-click to edit live; save changes in My Brains.",
+  );
+}
+$("builder-map").onclick = () => {
+  try {
+    saveCreated(generateDraft());
+  } catch (e) {
+    $("create-status").textContent = e.message;
+  }
+};
+$("create-validate").onclick = () => {
+  try {
+    const data = parseBrainJSON($("create-json").value),
+      net = Network.load(data);
+    $("create-status").textContent =
+      `Valid brain: ${net.shape.join(" → ")} · ${net.weights.flat(2).length} parameters. Nothing was executed or trained during validation.`;
+  } catch (e) {
+    $("create-status").textContent = "Invalid brain: " + e.message;
+  }
+};
+$("create-save").onclick = () => {
+  try {
+    saveCreated(parseBrainJSON($("create-json").value));
+  } catch (e) {
+    $("create-status").textContent = "Could not save: " + e.message;
+  }
+};
+$("create-import").onclick = () => $("create-file").click();
+const createFile = document.createElement("input");
+createFile.id = "create-file";
+createFile.type = "file";
+createFile.accept = ".json,application/json";
+createFile.hidden = true;
+$("brain-create").append(createFile);
+createFile.onchange = async () => {
+  const file = createFile.files[0];
+  if (!file) return;
+  try {
+    if (file.size > 1500000) throw new Error("File too large.");
+    const text = await file.text();
+    const data = parseBrainJSON(text);
+    Network.load(data);
+    $("create-json").value = JSON.stringify(data, null, 2);
+    $("create-name").value =
+      data.brainName || file.name.replace(/\.json$/i, "");
+    $("create-status").textContent =
+      "Valid imported draft. Review its name and save.";
+  } catch (e) {
+    $("create-status").textContent = e.message;
+  }
+  createFile.value = "";
+};
+async function preparePrompt() {
+  $("create-status").textContent =
+    "Preparing the complete prompt from the selected game source…";
+  const [shared, adapters] = await Promise.all([
+    fetch("/src/game.js").then((r) => {
+      if (!r.ok) throw new Error("Could not load game source.");
+      return r.text();
+    }),
+    fetch("/src/games.js").then((r) => {
+      if (!r.ok) throw new Error("Could not load task source.");
+      return r.text();
+    }),
+  ]);
+  const text = brainPrompt({
+    gameId: game.id,
+    shape: builderShape(),
+    sharedSource: shared,
+    gameSource: adapters,
+  });
+  $("llm-prompt").value = text;
+  return text;
+}
+$("prompt-show").onclick = async () => {
+  try {
+    await preparePrompt();
+    $("prompt-details").open = true;
+    $("create-status").textContent =
+      "Prompt ready. You can copy the full text below.";
+  } catch (e) {
+    $("create-status").textContent = e.message;
+  }
+};
+$("prompt-copy").onclick = async () => {
+  try {
+    const text = await preparePrompt();
+    try {
+      await navigator.clipboard.writeText(text);
+      $("create-status").textContent =
+        "Prompt copied. Paste into any LLM, then paste its complete JSON response here.";
+    } catch {
+      $("prompt-details").open = true;
+      $("llm-prompt").focus();
+      $("llm-prompt").select();
+      $("create-status").textContent =
+        "Clipboard unavailable. The prompt is selected below; use Cmd/Ctrl+C.";
+    }
+  } catch (e) {
+    $("create-status").textContent = e.message;
+  }
+};
+
+$("create-current").onclick = () => {
+  if (!model) {
+    $("create-status").textContent = "Load a brain first.";
+    return;
+  }
+  $("create-json").value = JSON.stringify(model, null, 2);
+  $("create-name").value =
+    (activeBrain
+      ? brains.records.find((b) => b.id === activeBrain)?.name ||
+        "Current brain"
+      : "Current brain") + " copy";
+  $("create-status").textContent =
+    "Current brain copied into an editable draft. Saving creates a separate named brain.";
 };

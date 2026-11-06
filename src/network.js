@@ -8,13 +8,16 @@ export const INPUT_NAMES = [
   "paddle_x",
 ];
 export const OUTPUT_NAMES = ["move_left", "stay", "move_right"];
-export const LAYER_NAMES = ["hidden_1", "hidden_2", "actions"];
+export function layerName(layer, shape = SHAPE) {
+  return layer === shape.length - 2 ? "actions" : `hidden_${layer + 1}`;
+}
 export function neuronNames(layer, shape = SHAPE) {
-  return layer === 2
+  return layer === shape.length - 2
     ? OUTPUT_NAMES
     : Array.from(
         { length: shape[layer + 1] },
-        (_, i) => `${LAYER_NAMES[layer]}_${String(i + 1).padStart(2, "0")}`,
+        (_, i) =>
+          `${layerName(layer, shape)}_${String(i + 1).padStart(2, "0")}`,
       );
 }
 
@@ -74,10 +77,10 @@ export class Network {
         const w = this.weights[l][j];
         let sum = w[a.length];
         for (let i = 0; i < a.length; i++) sum += w[i] * a[i];
-        out[j] = l === 2 ? sum : Math.tanh(sum);
+        out[j] = l === this.weights.length - 1 ? sum : Math.tanh(sum);
       }
     }
-    return this.activations[3];
+    return this.activations.at(-1);
   }
   action(input) {
     return argmax(this.predict(input));
@@ -91,16 +94,16 @@ export class Network {
       a = this.activations,
       d = this.deltas;
     const error = pred - target;
-    d[3].fill(0);
-    d[3][action] = Math.max(-1, Math.min(1, error));
-    for (let l = 2; l > 0; l--)
+    d.at(-1).fill(0);
+    d.at(-1)[action] = Math.max(-1, Math.min(1, error));
+    for (let l = this.shape.length - 2; l > 0; l--)
       for (let i = 0; i < this.shape[l]; i++) {
         let sum = 0;
         for (let j = 0; j < this.shape[l + 1]; j++)
           sum += this.weights[l][j][i] * d[l + 1][j];
         d[l][i] = sum * (1 - a[l][i] * a[l][i]);
       }
-    for (let l = 0; l < 3; l++)
+    for (let l = 0; l < this.weights.length; l++)
       for (let j = 0; j < this.shape[l + 1]; j++) {
         const g = this.gradients[l][j];
         for (let i = 0; i < this.shape[l]; i++) g[i] += d[l + 1][j] * a[l][i];
@@ -113,7 +116,7 @@ export class Network {
     this.updates++;
     const c1 = 1 - 0.9 ** this.updates,
       c2 = 1 - 0.999 ** this.updates;
-    for (let l = 0; l < 3; l++)
+    for (let l = 0; l < this.weights.length; l++)
       for (let j = 0; j < this.shape[l + 1]; j++)
         for (let i = 0; i <= this.shape[l]; i++) {
           const g = this.gradients[l][j][i] / batchSize,
@@ -126,7 +129,7 @@ export class Network {
         }
   }
   copyFrom(network) {
-    for (let l = 0; l < 3; l++)
+    for (let l = 0; l < this.weights.length; l++)
       for (let j = 0; j < this.shape[l + 1]; j++)
         for (let i = 0; i <= this.shape[l]; i++)
           this.weights[l][j][i] = network.weights[l][j][i];
@@ -134,6 +137,7 @@ export class Network {
   serialize() {
     return {
       version: 2,
+      observationSchema: "paddle-tracking-v1",
       algorithm: "double-dqn",
       shape: this.shape,
       inputs: INPUT_NAMES,
@@ -141,8 +145,8 @@ export class Network {
       explanation:
         "Hidden neurons: tanh(sum(input × weight) + bias). Action neurons: sum(input × weight) + bias. Choose the action with the highest Q value.",
       layers: this.weights.map((layer, l) => ({
-        name: LAYER_NAMES[l],
-        activation: l === 2 ? "linear" : "tanh",
+        name: layerName(l, this.shape),
+        activation: l === this.weights.length - 1 ? "linear" : "tanh",
         neurons: layer.map((row, j) => ({
           name: neuronNames(l, this.shape)[j],
           bias: row[this.shape[l]],
@@ -158,30 +162,36 @@ export class Network {
   static load(data) {
     if (
       data?.version !== 2 ||
+      (data.observationSchema &&
+        data.observationSchema !== "paddle-tracking-v1") ||
       data.algorithm !== "double-dqn" ||
       JSON.stringify(data.inputs) !== JSON.stringify(INPUT_NAMES) ||
       JSON.stringify(data.outputs) !== JSON.stringify(OUTPUT_NAMES) ||
       !Array.isArray(data.shape) ||
-      data.shape.length !== 4 ||
+      data.shape.length < 3 ||
+      data.shape.length > 8 ||
       data.shape[0] !== 5 ||
-      data.shape[3] !== 3 ||
+      data.shape.at(-1) !== 3 ||
       data.shape
-        .slice(1, 3)
+        .slice(1, -1)
         .some((n) => !Number.isInteger(n) || n < 1 || n > 64) ||
       !Array.isArray(data.layers) ||
-      data.layers.length !== 3
+      data.layers.length !== data.shape.length - 1
     )
       throw new Error(
-        "Unsupported model format. Use a Breakout Lab reinforcement-learning checkpoint.",
+        "Invalid brain header. Expected version 2, double-dqn, 5 named inputs, 1–6 hidden layers (1–64 neurons each), and 3 named actions.",
       );
     const weights = data.layers.map((layer, l) => {
       if (
-        layer.name !== LAYER_NAMES[l] ||
-        layer.activation !== (l === 2 ? "linear" : "tanh") ||
+        layer.name !== layerName(l, data.shape) ||
+        layer.activation !==
+          (l === data.layers.length - 1 ? "linear" : "tanh") ||
         !Array.isArray(layer.neurons) ||
         layer.neurons.length !== data.shape[l + 1]
       )
-        throw new Error("Invalid model layers.");
+        throw new Error(
+          `Invalid layer ${l + 1}: expected ${layerName(l, data.shape)}, ${data.shape[l + 1]} neurons, and ${l === data.layers.length - 1 ? "linear" : "tanh"} activation.`,
+        );
       return layer.neurons.map((neuron, j) => {
         const names = l === 0 ? INPUT_NAMES : neuronNames(l - 1, data.shape);
         if (
@@ -189,10 +199,14 @@ export class Network {
           !neuron.weights ||
           Object.keys(neuron.weights).length !== names.length
         )
-          throw new Error("Invalid neuron structure.");
+          throw new Error(
+            `Invalid neuron ${neuronNames(l, data.shape)[j]}: check its name and all ${names.length} incoming connection names.`,
+          );
         const row = [...names.map((name) => neuron.weights[name]), neuron.bias];
         if (row.some((v) => !Number.isFinite(v) || Math.abs(v) > 1000000))
-          throw new Error("Invalid model weights.");
+          throw new Error(
+            `Invalid numeric weight or bias in ${neuronNames(l, data.shape)[j]}. Use finite numbers with magnitude ≤ 1,000,000.`,
+          );
         return row;
       });
     });

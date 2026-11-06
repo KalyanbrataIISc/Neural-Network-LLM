@@ -11,6 +11,45 @@ const types = {
 http
   .createServer(async (req, res) => {
     try {
+      if (req.url.startsWith("/api/native/")) {
+        const origin = req.headers.origin;
+        if (origin && origin !== `http://${req.headers.host}`) {
+          res.writeHead(403).end();
+          return;
+        }
+        const suffix = req.url.slice("/api/native".length);
+        if (!/^\/(status|jobs(?:\/[a-f0-9]{32})?)$/.test(suffix)) {
+          res.writeHead(404).end();
+          return;
+        }
+        try {
+          let body = "";
+          for await (const chunk of req) {
+            body += chunk;
+            if (body.length > 1500000) throw new Error("Request too large.");
+          }
+          const response = await fetch("http://127.0.0.1:3001" + suffix, {
+            method: req.method,
+            headers: { "Content-Type": "application/json" },
+            body: ["GET", "HEAD"].includes(req.method) ? undefined : body,
+            signal: AbortSignal.timeout(15000),
+          });
+          res
+            .writeHead(response.status, {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-store",
+            })
+            .end(await response.text());
+        } catch {
+          res.writeHead(503, { "Content-Type": "application/json" }).end(
+            JSON.stringify({
+              error:
+                "Native service unavailable. Install backend/requirements.txt and run npm run gpu in another terminal.",
+            }),
+          );
+        }
+        return;
+      }
       const path = resolve(
         root,
         "." +

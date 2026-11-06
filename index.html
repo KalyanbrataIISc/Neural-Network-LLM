@@ -15,6 +15,7 @@
           ><span class="brand-icon">▥</span> BREAKOUT<span class="muted">
             / LAB</span
           ></a
+        ><button id="brains-open">My Brains</button
         ><span class="local"
           ><i></i> RUNNING LOCALLY <span class="version">v.01</span></span
         >
@@ -37,6 +38,13 @@
       </section>
       <div class="workspace">
         <section class="game-panel">
+          <label class="game-picker"
+            >Game
+            <select id="game-select">
+              <option value="breakout">Breakout</option>
+              <option value="catch">Catch</option>
+            </select></label
+          >
           <div class="panel-top">
             <div class="tabs" aria-label="Paddle controller">
               <button id="human" class="selected" aria-pressed="true">
@@ -50,8 +58,11 @@
           <div class="scoreboard">
             <div><span>SCORE</span><strong id="score">0000</strong></div>
             <div>
-              <span>BRICKS</span
-              ><strong><span id="bricks">50</span><small> / 50</small></strong>
+              <span id="object-label">BRICKS</span
+              ><strong
+                ><span id="bricks">50</span
+                ><small id="brick-total"> / 50</small></strong
+              >
             </div>
             <div class="lives">
               <span>LIVES</span><strong id="lives">● ● ●</strong>
@@ -124,6 +135,9 @@
               <b class="positive">+ positive</b> · glow = signal</span
             >
           </div>
+          <p id="flow-detail" class="flow-detail" role="status">
+            Select a connection to inspect its multiplication.
+          </p>
           <p class="graph-help">
             Drop a neuron into either hidden layer. Drag node → node to connect.
             Shift-drag to arrange. Right-click to edit; ↑ / ↓ changes by 0.01.
@@ -144,11 +158,145 @@
       </footer>
       <p id="notice" role="status" class="notice" hidden></p>
     </main>
+    <dialog id="brain-create">
+      <div class="settings-heading">
+        <h2>Add Brain</h2>
+        <button id="create-close">Close ✕</button>
+      </div>
+      <p>
+        Import or paste a complete model, or build a new one. Save it with a
+        name, then edit it on the live map.
+      </p>
+      <label class="field-label" for="create-name">Brain name</label
+      ><input id="create-name" value="My new brain" maxlength="80" />
+      <div class="creator-columns">
+        <section>
+          <h3>Build from scratch</h3>
+          <p>5 shared inputs → hidden layers → 3 actions</p>
+          <div id="builder-layers"></div>
+          <button id="builder-add-layer">+ Add hidden layer</button
+          ><label
+            >Initial weights<select id="builder-init">
+              <option value="random">
+                Small random values · ready to train
+              </option>
+              <option value="zero">All zero · manual editing template</option>
+            </select></label
+          >
+          <p class="creator-hint">
+            Zero initialization is for manual construction. Use random values or
+            Reset weights before training.
+          </p>
+          <button id="builder-generate">Generate JSON draft</button
+          ><button id="builder-map">Create & edit on map</button>
+        </section>
+        <section>
+          <h3>Ask an LLM to handwrite weights</h3>
+          <p>
+            Copy a detailed prompt for the selected game. It forbids tools,
+            browsing, execution, simulation, and training. The prompt includes
+            the schema, equations, full game source, and a complete small
+            template using the builder’s layer sizes.
+          </p>
+          <button id="prompt-copy">Copy LLM prompt</button
+          ><button id="prompt-show">View prompt</button
+          ><button id="create-import">Import JSON file</button
+          ><button id="create-current">Edit current brain as draft</button>
+        </section>
+      </div>
+      <label class="field-label" for="create-json"
+        >Paste / write the complete brain JSON</label
+      ><textarea
+        id="create-json"
+        spellcheck="false"
+        placeholder="Paste the LLM’s complete JSON here, or generate a draft above."
+      ></textarea>
+      <div class="editor-actions">
+        <button id="create-validate">Validate JSON</button
+        ><button id="create-save" class="primary">
+          Save named brain & load
+        </button>
+      </div>
+      <p id="create-status" role="status"></p>
+      <details id="prompt-details">
+        <summary>
+          Complete prompt · copy manually if clipboard access is unavailable
+        </summary>
+        <textarea id="llm-prompt" readonly aria-label="LLM prompt"></textarea>
+      </details>
+    </dialog>
+    <dialog id="brains-panel">
+      <div class="settings-heading">
+        <h2>My Brains</h2>
+        <button id="brain-add">+ Add Brain</button>
+        <button id="brains-close">Close ✕</button>
+      </div>
+      <p>
+        Save a named copy of the live network. Brains stay in this browser;
+        export JSON to share or back them up.
+      </p>
+      <div class="brain-save">
+        <input
+          id="brain-name"
+          placeholder="Name your brain"
+          maxlength="80"
+          aria-label="Brain name"
+        /><button id="brain-save">Save as new brain</button
+        ><button id="brain-update">Update loaded brain</button
+        ><button id="brain-import">Import JSON</button>
+      </div>
+      <p id="brain-status" role="status"></p>
+      <div id="brain-list"></div>
+    </dialog>
     <dialog id="settings-panel">
       <div class="settings-heading">
         <h2>Settings & training</h2>
         <button id="settings-close">Close ✕</button>
       </div>
+      <section class="arena-plan card">
+        <h3>Training arena</h3>
+        <p>
+          Continue the loaded brain across tasks. Trial counts are exact; the
+          same five input slots and three actions apply to every game.
+        </p>
+        <label
+          ><input id="arena-enabled" type="checkbox" /> Use a multi-game
+          plan</label
+        >
+        <div class="trial-grid">
+          <label
+            >Breakout trials<input
+              id="trials-breakout"
+              type="number"
+              min="0"
+              max="100000"
+              step="1"
+              value="500" /></label
+          ><label
+            >Catch trials<input
+              id="trials-catch"
+              type="number"
+              min="0"
+              max="100000"
+              step="1"
+              value="500"
+          /></label>
+        </div>
+        <label
+          >Order<select id="arena-order">
+            <option value="interleaved">Interleaved · alternate games</option>
+            <option value="sequential">Sequential · Breakout then Catch</option>
+          </select></label
+        ><label
+          >Training engine<select id="training-engine">
+            <option value="browser">Browser · CPU worker</option>
+            <option value="native">Native · auto GPU (MPS / CUDA)</option>
+          </select></label
+        >
+        <p id="device-status">Browser CPU. Native service is optional.</p>
+        <button id="check-device">Check native device</button>
+        <p id="per-game-eval"></p>
+      </section>
       <aside>
         <section class="training card">
           <div class="card-heading">

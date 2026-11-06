@@ -20,6 +20,11 @@ console.log(
 const model = train({
   episodes,
   initialModel,
+  gameId: option("--game", "breakout"),
+  plan: option("--plan", null)
+    ? JSON.parse(readFileSync(option("--plan"), "utf8"))
+    : null,
+  order: option("--order", "interleaved"),
   onCheckpoint: save,
   onProgress: (p) => {
     if (p.episode % 100 === 0 || p.episode === episodes)

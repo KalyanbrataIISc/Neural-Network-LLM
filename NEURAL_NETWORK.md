@@ -65,13 +65,13 @@ The editor's **Add neuron in this layer** button keeps the structure valid autom
 
 For hand-editing JSON, keep all of these in agreement:
 
-- `shape`: `[5, first_hidden_count, second_hidden_count, 3]`
+- `shape`: `[5, ...hidden_layer_widths, 3]` (one to six hidden widths)
 - Each layer's `neurons` list, with names numbered continuously from `hidden_1_01` or `hidden_2_01`
 - Every next-layer neuron's weight map must contain one entry for every neuron in the previous layer
 - `hidden_1` and `hidden_2` use `tanh`; `actions` uses `linear`
 - Input and output names must stay in the documented order
 
-The two hidden counts can each be 1–64. Values must be finite numbers with magnitude at most 1,000,000. JSON cannot contain comments, `NaN`, or `Infinity`. The top-level `version: 2` and `algorithm: "double-dqn"` identify this checkpoint format.
+There can be one to six hidden layers, each with 1–64 neurons. Values must be finite numbers with magnitude at most 1,000,000. JSON cannot contain comments, `NaN`, or `Infinity`. The top-level `version: 2` and `algorithm: "double-dqn"` identify this checkpoint format.
 
 The file also includes descriptive training metadata such as episodes, simulated frames, and evaluation score. These fields are not input to the neurons. Editing the network through the UI clears old evaluation metadata so it is not presented as a measurement of your edited policy.
 
@@ -84,3 +84,17 @@ npm run train -- --episodes 25000 --resume my-weights.json --out models/experime
 ```
 
 The source in `src/network.js` spells out the same neuron operations and optimization in JavaScript without an ML framework.
+
+## Named brains and shared observations
+
+Use **My Brains** to save experiments as separate named copies. **Update loaded brain** writes the current live model back to its named entry; graph edits alone preserve the previously saved copy. Import validates the network before saving it. Export gives the same editable JSON with a `brainName` field.
+
+Both Breakout and Catch use `observationSchema: "paddle-tracking-v1"`. The file keys `ball_x`, `ball_y`, `velocity_x`, `velocity_y`, and `paddle_x` are historical aliases for target x/y, target velocity x/y, and controlled-agent x. Their scaling and action order are identical across both tasks. Existing version-2 checkpoints without a schema field remain supported; a different explicit schema is rejected. Training plans and history are metadata, not inputs to the neurons.
+
+The map now freezes a calculation for a complete replay cycle. Select an edge to see its source activation multiplied by its weight. Select a neuron to see the sum of all incoming contributions, its bias, and its activation function. Live game inputs continue updating independently; the next replay uses a fresh captured input. This keeps one signal trace understandable while you watch it travel.
+
+## Creating a handwritten model
+
+**My Brains → Add Brain** offers layer-count/width controls and a complete editable JSON draft. Hidden layer names are `hidden_1`, `hidden_2`, …, followed by `actions`; neuron names follow the same pattern with `_01`, `_02`, etc. Each neuron names every input from the preceding layer. There can be 1–6 hidden layers, each 1–64 wide, with tanh activations. Input width stays 5 and the final linear action width stays 3. The original 5→24→24→3 checkpoint remains valid.
+
+Copy the supplied LLM prompt to request weights written natively by an LLM, without any tools or training. The prompt uses the selected game's actual rules and source, and includes a complete literal template. Paste its result as JSON, validate it, and save with a descriptive name. For a quick manual experiment, create a 5→4→3 network, edit the draft or the map, and apply/save the result. Zero-filled templates need manual nonzero connections or randomized reset before effective gradient-based learning.
