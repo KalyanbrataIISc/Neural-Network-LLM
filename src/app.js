@@ -967,6 +967,9 @@ function showCreate() {
   if ($("brains-panel").open) $("brains-panel").close();
   $("create-status").textContent = "";
   renderBuilder();
+  $("prompt-architecture").value = "current";
+  promptWidths = [...(network?.shape.slice(1, -1) || [24, 24])];
+  renderPromptControls();
   $("brain-create").showModal();
 }
 $("brain-add").onclick = showCreate;
@@ -1055,6 +1058,8 @@ createFile.onchange = async () => {
   createFile.value = "";
 };
 async function preparePrompt() {
+  const shape = promptShape();
+  const selectedGame = game.id;
   $("create-status").textContent =
     "Preparing the complete prompt from the selected game source…";
   const [shared, adapters] = await Promise.all([
@@ -1068,8 +1073,8 @@ async function preparePrompt() {
     }),
   ]);
   const text = brainPrompt({
-    gameId: game.id,
-    shape: builderShape(),
+    gameId: selectedGame,
+    shape,
     sharedSource: shared,
     gameSource: adapters,
   });
@@ -1118,4 +1123,91 @@ $("create-current").onclick = () => {
       : "Current brain") + " copy";
   $("create-status").textContent =
     "Current brain copied into an editable draft. Saving creates a separate named brain.";
+};
+
+let promptWidths = [24, 24];
+function promptShape() {
+  const shape =
+    $("prompt-architecture").value === "current"
+      ? [...(network?.shape || [5, 24, 24, 3])]
+      : [5, ...promptWidths, 3];
+  if (
+    shape.length < 3 ||
+    shape.length > 8 ||
+    shape.slice(1, -1).some((n) => !Number.isInteger(n) || n < 1 || n > 64)
+  )
+    throw new Error(
+      "Choose 1–6 hidden layers with 1–64 neurons each for the prompt.",
+    );
+  return shape;
+}
+function invalidatePrompt() {
+  $("llm-prompt").value = "";
+  $("create-status").textContent =
+    "Prompt architecture changed. View or copy to generate the updated prompt.";
+}
+function renderPromptControls() {
+  const custom = $("prompt-architecture").value === "custom";
+  $("prompt-custom").hidden = !custom;
+  const list = $("prompt-layers");
+  list.replaceChildren();
+  promptWidths.forEach((width, i) => {
+    const row = document.createElement("div");
+    row.className = "builder-row";
+    const label = document.createElement("label");
+    label.textContent = `Prompt hidden layer ${i + 1}`;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = 1;
+    input.max = 64;
+    input.step = 1;
+    input.value = width;
+    input.setAttribute(
+      "aria-label",
+      `Prompt hidden layer ${i + 1} neuron count`,
+    );
+    input.oninput = () => {
+      promptWidths[i] = Number(input.value);
+      invalidatePrompt();
+      updatePromptSummary();
+    };
+    label.append(input);
+    const remove = document.createElement("button");
+    remove.textContent = "Remove";
+    remove.disabled = promptWidths.length === 1;
+    remove.onclick = () => {
+      promptWidths.splice(i, 1);
+      invalidatePrompt();
+      renderPromptControls();
+    };
+    row.append(label, remove);
+    list.append(row);
+  });
+  $("prompt-add-layer").disabled = promptWidths.length >= 6;
+  updatePromptSummary();
+}
+function updatePromptSummary() {
+  try {
+    const shape = promptShape();
+    $("prompt-shape-summary").textContent =
+      `${shape.join(" → ")} · ${shape.length - 2} hidden layer(s) · ${shape.slice(1).reduce((sum, n, i) => sum + n * (shape[i] + 1), 0)} parameters. Independent of the scratch builder.`;
+  } catch (e) {
+    $("prompt-shape-summary").textContent = e.message;
+  }
+}
+$("prompt-architecture").onchange = () => {
+  if ($("prompt-architecture").value === "custom")
+    promptWidths = [...(network?.shape.slice(1, -1) || [24, 24])];
+  invalidatePrompt();
+  renderPromptControls();
+};
+$("prompt-add-layer").onclick = () => {
+  promptWidths.push(promptWidths.at(-1) || 4);
+  invalidatePrompt();
+  renderPromptControls();
+};
+$("prompt-reset-current").onclick = () => {
+  promptWidths = [...(network?.shape.slice(1, -1) || [24, 24])];
+  invalidatePrompt();
+  renderPromptControls();
 };

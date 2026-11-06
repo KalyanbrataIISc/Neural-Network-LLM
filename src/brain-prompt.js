@@ -1,4 +1,4 @@
-import { Network } from "./network.js";
+import { Network, SHAPE } from "./network.js";
 import { GAMES } from "./games.js";
 export function parseBrainJSON(text) {
   const cleaned = text
@@ -15,7 +15,7 @@ export function parseBrainJSON(text) {
 }
 export function brainPrompt({
   gameId = "breakout",
-  shape = [5, 4, 3],
+  shape = SHAPE,
   gameSource = "",
   sharedSource = "",
 } = {}) {

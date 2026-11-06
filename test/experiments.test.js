@@ -130,3 +130,20 @@ test("LLM prompt and pasted JSON have a complete valid handwritten contract", as
   assert.deepEqual(Network.load(parseBrainJSON(wrapped)).shape, [5, 4, 3]);
   assert.throws(() => parseBrainJSON("const brain = {}"));
 });
+
+test("prompt templates preserve the exact requested architecture", async () => {
+  const { brainPrompt } = await import("../src/brain-prompt.js");
+  for (const shape of [
+    [5, 24, 24, 3],
+    [5, 8, 6, 2, 3],
+  ]) {
+    const text = brainPrompt({ shape });
+    const template = JSON.parse(
+      text.match(
+        /COMPLETE VALID STRUCTURE TO FILL[^\n]*\n([\s\S]*?)\n\nEXACT JAVASCRIPT/,
+      )[1],
+    );
+    assert.deepEqual(Network.load(template).shape, shape);
+    assert.equal(template.layers.length, shape.length - 1);
+  }
+});

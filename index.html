@@ -195,9 +195,20 @@
           <p>
             Copy a detailed prompt for the selected game. It forbids tools,
             browsing, execution, simulation, and training. The prompt includes
-            the schema, equations, full game source, and a complete small
-            template using the builder’s layer sizes.
+            the schema, equations, full game source, and a complete template
+            matching the architecture selected below.
           </p>
+          <label for="prompt-architecture">Prompt architecture</label
+          ><select id="prompt-architecture">
+            <option value="current">Use current model (default)</option>
+            <option value="custom">Customize layers and neuron counts</option>
+          </select>
+          <p id="prompt-shape-summary" class="creator-hint"></p>
+          <div id="prompt-custom" hidden>
+            <div id="prompt-layers"></div>
+            <button id="prompt-add-layer">+ Add prompt hidden layer</button
+            ><button id="prompt-reset-current">Reset to current model</button>
+          </div>
           <button id="prompt-copy">Copy LLM prompt</button
           ><button id="prompt-show">View prompt</button
           ><button id="create-import">Import JSON file</button
