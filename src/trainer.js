@@ -40,7 +40,7 @@ function newEpisode(random, gameId = "breakout") {
 }
 export const BREAKOUT_ENV = {
   spec: BREAKOUT_SPEC, defaultShape: [5, 24, 24, 3],
-  createEpisode: newEpisode, inputs: (game) => inputs(game.ball, game.paddle),
+  createEpisode: (random) => newEpisode(random), inputs: (game) => inputs(game.ball, game.paddle),
   transition, validateRewards, score: (game) => game.score, hits: (game) => game.hits,
 };
 function environmentFor(value = "breakout") {
@@ -59,7 +59,7 @@ export function evaluate(
   let score = 0,
     hits = 0;
   for (let i = 0; i < games; i++) {
-    const g = environment.createEpisode(rng(9000 + i));
+    const g = environment.createEpisode(rng(9000 + i), { purpose: "evaluation", evaluationIndex: i });
     for (let frames = 0; frames < maxFrames; frames += ACTION_FRAMES) {
       const t = environment.transition(g, network.action(environment.inputs(g)));
       if (t.done) break;
@@ -94,6 +94,10 @@ export function* trainingSession({
   plan = environment ? [{ game: "ctf", trials: episodes }] : plan || [{ game: gameId, trials: episodes }];
   const trials = environment ? Array(episodes).fill("ctf") : schedule(plan, order);
   episodes = trials.length;
+  const trainingMapIds = new Set(env.mapProtocol && !resetWeights && initialModel?.mapProtocol?.version === env.mapProtocol.version
+    ? (initialModel.trainingMapIds || []).filter((id) => Number.isInteger(id) && id >= env.mapProtocol.splits.training.start && id <= env.mapProtocol.splits.training.end)
+    : []);
+  const mapMetadata = () => env.mapProtocol ? { mapProtocol: env.mapProtocol, trainingMapIds: [...trainingMapIds].sort((a, b) => a - b) } : {};
   const completed = Object.fromEntries(plan.map((r) => [r.game, 0]));
   const evaluateAll = (net) => {
     const byGame = Object.fromEntries(
@@ -137,6 +141,7 @@ export function* trainingSession({
           : null,
       episode,
       episodes,
+      ...(env.mapProtocol ? { trainingMapCount: trainingMapIds.size } : {}),
       currentGame: trials[Math.max(0, episode - 1)],
       completed: { ...completed },
       byGame: evaluation.byGame,
@@ -162,6 +167,7 @@ export function* trainingSession({
   const decay = 25000;
   const checkpointData = (episode) => ({
     ...checkpoint,
+    ...mapMetadata(),
     observationSchema: env.spec.observationSchema,
     trainingPlan: plan,
     order,
@@ -182,7 +188,8 @@ export function* trainingSession({
     actionFrames: ACTION_FRAMES,
   });
   for (let episode = 1; episode <= episodes; episode++) {
-    const game = environment ? env.createEpisode(random) : newEpisode(random, trials[episode - 1]);
+    const game = environment ? env.createEpisode(random, { purpose: "training", episode }) : newEpisode(random, trials[episode - 1]);
+    if (env.mapProtocol) trainingMapIds.add(game.mapId);
     let episodeReward = 0;
     const episodeTerms = Object.fromEntries(Object.keys(rewards).map((key) => [key, 0]));
     for (let t = 0; t < 900; t++) {
@@ -252,6 +259,7 @@ export function* trainingSession({
       visualizationInput: Array.from(network.activations[0]),
       model: {
         ...network.serialize(),
+        ...mapMetadata(),
         rewardConfig: { ...rewards }, checkpointSelection, discountFactor: GAMMA,
         trainingSeed: seed, evaluationSeeds: [9000, 9001, 9002, 9003, 9004],
         observationSchema: env.spec.observationSchema,

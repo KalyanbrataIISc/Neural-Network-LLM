@@ -28,6 +28,12 @@
         <div class="tabs" aria-label="Robot controller"><button id="human" class="selected" aria-pressed="true">⌨ Human control</button><button id="ai" aria-pressed="false">✧ Neural network</button></div>
         <span id="live-label" class="live"><i></i> HUMAN IN CONTROL</span>
       </div>
+      <form id="map-controls" class="map-controls">
+        <label>Map set<select id="map-set"><option value="test">Held-out test · 8,000 maps</option><option value="training">Training · 1,000 maps</option><option value="validation">Validation · 1,000 maps</option></select></label>
+        <label>Map ID<input id="map-id" type="number" min="2001" max="10000" step="1" value="2001" required /></label>
+        <button type="submit">Load map</button><button id="map-random" type="button">↻ Random map</button>
+        <p id="map-info" role="status">Map 2001 · held-out test</p>
+      </form>
       <div class="scoreboard ctf-scoreboard">
         <div><span>MISSION POINTS</span><strong id="score">0</strong></div>
         <div><span>HEALTH</span><strong id="health">100</strong></div>
@@ -35,7 +41,7 @@
         <div><span>OBJECTIVE</span><strong id="objective">GET FLAG</strong></div>
       </div>
       <div class="arena">
-        <canvas id="game" width="960" height="640" tabindex="0" aria-label="Robot capture-the-flag. Arrow keys or WASD move, Space fires while moving, Shift dashes. Collect the orange flag and return to the cyan base."></canvas>
+        <canvas id="game" width="960" height="640" tabindex="0" aria-label="Robot capture-the-flag. Arrow keys or WASD move, Space fires while moving, Shift dashes. Find the orange flag and return to the cyan base on the selected map."></canvas>
         <div id="overlay" class="overlay">
           <div class="overlay-symbol">⚑</div><span class="eyebrow" id="overlay-tag">ONE ROBOT. TWO OBJECTIVES.</span>
           <h2 id="overlay-title">Out. And back.</h2><p id="overlay-copy">Take the orange flag. Return to your cyan base alive.</p>
@@ -52,7 +58,7 @@
         <button data-keys="fire" class="touch-ability">Fire</button><button data-keys="shift" class="touch-ability">Dash</button>
       </div>
       <div class="mission-notes">
-        <p><b>Mission:</b> pick up the orange flag in the top-right, then return to the cyan base in the bottom-left. Walls stop movement and shots. Health (green), ammo (gold), and energy (cyan) packs replenish after 600 frames. Carrying the flag slows you down.</p>
+        <p><b>Mission:</b> find the orange flag and return to the cyan base. Their locations, cover, sentries, and supplies vary between maps. Walls stop movement and shots. Health (green), ammo (gold), and energy (cyan) packs replenish after 600 frames. Carrying the flag slows you down.</p>
         <p><b>24 actions:</b> 8 compass directions × 3 abilities (move, fire, dash). Every AI action includes movement. Space or Shift without a direction uses your facing direction. Fire aims at the nearest enemy with a clear line of sight; with no visible enemy it fires along your movement direction. The same aiming rule applies to both controllers.</p>
         <p><b>Limits:</b> 100 health, 30 ammo, 100 energy. Shots cost 1 ammo with a 14-frame cooldown. Dash costs 20 energy with a 45-frame cooldown. A mission ends on delivery, destruction, or 3,600 frames (60 simulated seconds). Enemy patrols and firing are scripted opponents; the network receives no example actions.</p>
         <p id="action-readout" class="action-readout">Controller: human · firing uses shared automatic aim.</p>
@@ -60,33 +66,16 @@
         <p id="live-reward" class="reward-average">Live reward preview: — (using the reward editor's current coefficients)</p>
       </div>
     </section>
-    <aside>
-      <section class="training card">
-        <div class="card-heading"><span class="eyebrow">LEARN THE WHOLE MISSION</span><span class="chip">DOUBLE DQN</span></div>
-        <h2>More to learn<span>.</span></h2>
-        <p id="model-info">New experiment: random weights, no pretrained policy. Complex navigation and combat may require substantial training; success is not guaranteed.</p>
-        <div class="architecture"><div><b>96</b><span>INPUTS</span></div><em>→</em><div><b id="hidden-count">48 / 32</b><span>HIDDEN</span></div><em>→</em><div><b>24</b><span>ACTIONS</span></div></div>
-        <div class="network-meta"><span id="parameter-count">7,016 parameters</span><span>tanh → linear Q</span></div>
-        <p class="network-limits"><b>1–4 hidden layers</b>, each with <b>1–128 neurons</b>. Fixed: 96 inputs and 24 outputs. At most 6 layers including input/output and 65,048 parameters. These limits belong to Robot Capture; Breakout keeps its own limits.</p>
-        <label class="field-label" for="epochs">Simulation budget</label>
-        <select id="epochs"><option value="100">First experiment · 100 episodes</option><option value="500" selected>Short run · 500 episodes</option><option value="1000">Standard run · 1,000 episodes</option><option value="5000">Long run · 5,000 episodes</option><option value="25000">Deep run · 25,000 episodes</option></select>
-        <label class="field-label" for="policy-selection">Policy to save</label>
-            <select id="policy-selection"><option value="score">Best evaluation game points</option><option value="latest">Latest evaluated policy · inspect reward effects</option></select>
-            <p class="reward-average">Best points may retain the initial policy. Choose Latest to inspect new reward-driven behavior. Checkpoints update every 100 episodes and at completion.</p>
-            <label class="fresh-option"><input id="fresh" type="checkbox" /> Reset weights; keep the architecture</label>
-        <button id="train" class="primary full">✧ Train robot <span>↗</span></button>
-        <div class="training-status"><span id="train-status" role="status">Ready to experiment</span><span id="epoch">0 / 500</span></div>
-        <div class="progress"><div id="progress"></div></div>
-        <div class="simulation-metrics"><span id="throughput">0 frames / sec</span><span id="exploration">Exploration: —</span></div>
-        <p id="reward-average" class="reward-average">Mean episode reward: —</p>
-        <details class="reward-settings"><summary>Mean reward by term</summary><p id="reward-breakdown">Start training to measure each contribution.</p></details>
-        <div class="loss-header"><span>EVALUATION MISSION POINTS</span><b id="evaluation">—</b></div>
-        <p class="reward-average">Mean points across 5 fixed-seed missions, with no exploration. Game points: +5 per enemy hit, +15 per defeat, +25 for flag pickup, +100 for delivery. Best-points mode selects by these points, then hit count. Latest mode saves the most recently evaluated policy. Reward edits do not change game points.</p>
-        <button id="watch" class="deploy">Watch AI play →</button><button id="inspect" class="inspect-button">◎ Edit architecture & weights</button>
-        <div class="model-actions"><button id="export">↓ Export model</button><button id="import">↑ Import model</button><input id="file" type="file" accept=".json,application/json" hidden /></div>
-        <details class="reward-settings"><summary>Saved training run rewards</summary><p id="checkpoint-rewards">Random weights; no training run yet.</p></details>
-      </section>
-    </aside>
+    <section class="neural-panel" aria-label="Robot neural network workbench">
+      <div class="neural-heading"><div><span class="eyebrow">LIVE NEURAL NETWORK</span><h2>The robot’s brain</h2><p id="graph-structure">96 → 48 → 32 → 24 · 7,016 parameters</p></div><button id="open-training">Training settings</button></div>
+      <div class="neural-toolbar"><button id="neuron-palette" draggable="true">+ Drag a neuron</button><label>Replay <select id="graph-speed"><option value="1">1×</option><option value="0.25">¼×</option><option value="0">Paused</option></select></label><button id="graph-step">Step layer →</button><button id="edit-brain">Edit architecture / JSON</button></div>
+      <div class="neural-training"><button id="train-shortcut">✧ Train robot</button><button id="watch-shortcut">Watch AI play →</button><a href="#reward-fields">Edit rewards ↓</a><p id="network-training-status" role="status">Ready to train · 96 inputs / 24 actions</p></div>
+      <div class="graph-viewport"><div class="graph-area"><canvas id="network-map" tabindex="0" aria-label="Interactive robot neural network: 96 inputs, editable hidden neurons, and 24 action outputs. Select a neuron to see connections; right-click a neuron or connection to edit."></canvas><div id="graph-tooltip" hidden></div></div></div>
+      <p id="graph-stage" class="graph-stage">Reading the robot's sensors…</p>
+      <p id="flow-detail" class="flow-detail" role="status">Select a neuron or connection to inspect actual calculations.</p>
+      <p class="graph-help">All neurons are shown. The overview samples connections to stay readable; select a neuron to show all its connections. Hover to inspect names and values. Right-click to edit weights or biases. Shift-drag to arrange neurons.</p>
+      <div id="graph-edit" hidden><label id="graph-edit-label" for="graph-value">Weight</label><input id="graph-value" type="number" step="0.01" /><button id="graph-edit-close">Done</button><button id="graph-zero">Set to zero</button></div>
+    </section>
   </div>
   <div class="ctf-explain">
     <section class="card">
@@ -101,7 +90,7 @@
       <h2>Sensors. State. Choices.</h2>
       <ul class="sensor-guide">
         <li><b>16 robot/objective values:</b> position, velocity, health, energy, ammo, shot/dash cooldowns, flag possession, offsets to flag and base, and facing direction.</li>
-        <li><b>32 directional sensors:</b> 8 compass sectors × ranges to walls, visible enemies, visible supplies, and visible hostile projectiles. Range is divided by 1,000; 1 means no detection. Wall rays sample every 12 pixels.</li>
+        <li><b>32 directional sensors:</b> 8 compass sectors × ranges to walls, visible enemies, visible supplies, and visible hostile projectiles. Range is divided by 1,000; 1 means no detection. Wall rays use exact rectangle intersections, including thin maze walls.</li>
         <li><b>32 enemy values:</b> 4 fixed enemy slots × relative position, velocity, health, range, visibility, and alive state. Hidden enemies expose only alive state; other values are zero.</li>
         <li><b>16 supply values:</b> 4 known supply stations × relative position, type (0 health / 0.5 ammo / 1 energy), and availability. Supply locations and cooldown availability are known.</li>
       </ul>
@@ -113,6 +102,36 @@
   <footer><span><i></i> Experiment with incentives. Watch what emerges.</span><span>SENSE → DECIDE → CAPTURE</span></footer>
   <p id="notice" role="status" class="notice" hidden></p>
 </main>
+<dialog id="training-settings"><div class="inspector-heading"><h2>Robot training</h2><button id="close-training" class="text-button">✕ Close</button></div>
+    <aside>
+      <section class="training card">
+        <div class="card-heading"><span class="eyebrow">LEARN THE WHOLE MISSION</span><span class="chip">DOUBLE DQN</span></div>
+        <h2>More to learn<span>.</span></h2>
+        <p id="model-info">New experiment: random weights, no pretrained policy. Complex navigation and combat may require substantial training; success is not guaranteed.</p>
+        <div class="architecture"><div><b>96</b><span>INPUTS</span></div><em>→</em><div><b id="hidden-count">48 / 32</b><span>HIDDEN</span></div><em>→</em><div><b>24</b><span>ACTIONS</span></div></div>
+        <div class="network-meta"><span id="parameter-count">7,016 parameters</span><span>tanh → linear Q</span></div>
+        <p class="network-limits"><b>1–4 hidden layers</b>, each with <b>1–128 neurons</b>. Fixed: 96 inputs and 24 outputs. At most 6 layers including input/output and 65,048 parameters. These limits belong to Robot Capture; Breakout keeps its own limits.</p>
+        <p class="network-limits">10,000 seeded maps: <b>1–1,000 training</b>, <b>1,001–2,000 validation</b>, and <b>2,001–10,000 held-out test</b>. Training samples only its 1,000-map pool. Checkpoints use validation maps 1,001–1,005. Test maps are never used by the trainer or checkpoint selection.</p>
+        <p id="map-training-info" class="reward-average">No recorded map-training history for the loaded weights.</p>
+        <label class="field-label" for="epochs">Simulation budget</label>
+        <select id="epochs"><option value="100">First experiment · 100 episodes</option><option value="500" selected>Short run · 500 episodes</option><option value="1000">Standard run · 1,000 episodes</option><option value="5000">Long run · 5,000 episodes</option><option value="25000">Deep run · 25,000 episodes</option></select>
+        <label class="field-label" for="policy-selection">Policy to save</label>
+            <select id="policy-selection"><option value="score">Best evaluation game points</option><option value="latest">Latest evaluated policy · inspect reward effects</option></select>
+            <p class="reward-average">Best points may retain the initial policy. Choose Latest to inspect new reward-driven behavior. Checkpoints update every 100 episodes and at completion.</p>
+            <label class="fresh-option"><input id="fresh" type="checkbox" /> Reset weights; keep the architecture</label>
+        <button id="train" class="primary full">✧ Train robot <span>↗</span></button>
+        <div class="training-status"><span id="train-status" role="status">Ready to experiment</span><span id="epoch">0 / 500</span></div>
+        <div class="progress"><div id="progress"></div></div>
+        <div class="simulation-metrics"><span id="throughput">0 frames / sec</span><span id="exploration">Exploration: —</span></div>
+        <p id="reward-average" class="reward-average">Mean episode reward: —</p>
+        <details class="reward-settings"><summary>Mean reward by term</summary><p id="reward-breakdown">Start training to measure each contribution.</p></details>
+        <div class="loss-header"><span>EVALUATION MISSION POINTS</span><b id="evaluation">—</b></div>
+        <p class="reward-average">Mean points across 5 fixed validation maps (IDs 1,001–1,005), with no exploration. The 8,000 held-out maps do not affect checkpoint selection. Game points: +5 per enemy hit, +15 per defeat, +25 for flag pickup, +100 for delivery. Best-points mode selects by these points, then hit count. Latest mode saves the most recently evaluated policy. Reward edits do not change game points.</p>
+        <button id="watch" class="deploy">Watch AI play →</button><button id="inspect" class="inspect-button">◎ Edit architecture & weights</button>
+        <div class="model-actions"><button id="export">↓ Export model</button><button id="import">↑ Import model</button><input id="file" type="file" accept=".json,application/json" hidden /></div>
+        <details class="reward-settings"><summary>Saved training run rewards</summary><p id="checkpoint-rewards">Random weights; no training run yet.</p></details>
+      </section>
+    </aside></dialog>
 <dialog id="inspector">
   <div class="inspector-heading"><div><span class="eyebrow">THE ROBOT'S BRAIN</span><h2>Make room for a new strategy.</h2></div><button id="close-inspector" class="text-button" aria-label="Close network editor">✕ Close</button></div>
   <p class="network-limits">96 inputs → 1–4 hidden layers of 1–128 neurons each → 24 outputs. Weights and biases: finite numbers from −1,000,000 to +1,000,000. Imported files: at most 8,000,000 bytes. Breakout checkpoints use different inputs and outputs and cannot be imported here.</p>

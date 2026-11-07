@@ -14,8 +14,8 @@ export function flowClock(milliseconds, duration = 1200, layers = 4) {
   };
 }
 export class NetworkMap {
-  constructor(canvas, { getNetwork, commit, notify }) {
-    Object.assign(this, { canvas, getNetwork, commit, notify });
+  constructor(canvas, { getNetwork, commit, notify, inputNames = OBSERVATION_NAMES, outputNames = OUTPUT_NAMES, maxOverviewEdges = Infinity }) {
+    Object.assign(this, { canvas, getNetwork, commit, notify, inputNames, outputNames, maxOverviewEdges });
     this.ctx = canvas.getContext("2d");
     this.nodes = [];
     this.edges = [];
@@ -77,6 +77,7 @@ export class NetworkMap {
       }
       this.drag = null;
     };
+    canvas.onpointercancel = () => { this.drag = null; };
     canvas.ondragover = (e) => e.preventDefault();
     canvas.ondrop = (e) => {
       e.preventDefault();
@@ -144,8 +145,8 @@ export class NetworkMap {
     } else this.pendingTrace = trace;
   }
   training(data) {
-    const next = Network.load(data);
-    next.predict(data.visualizationInput || [0, 0, 0, 0, 0]);
+    const next = Network.load(data, this.getNetwork()?.spec);
+    next.predict(data.visualizationInput || Array(next.shape[0]).fill(0));
     if (!this.trainNet) {
       this.trainNet = next;
       this.pendingTrace = null;
@@ -159,11 +160,11 @@ export class NetworkMap {
     this.reset();
   }
   step(input) {
-    const net = this.getNetwork();
+    const net = this.trainNet || this.getNetwork();
     if (!net) return false;
     if (!this.stepping || this.phase === net.shape.length - 1) {
       this.stepping = true;
-      net.predict(input);
+      net.predict(this.trainNet ? Array.from(net.activations[0]) : input);
       this.trace = net.activations.map((a) => Array.from(a));
       this.traceWeights = structuredClone(net.weights);
       this.phase = 0;
@@ -219,18 +220,21 @@ export class NetworkMap {
         structuredClone(source.weights),
         Math.random,
         source.shape,
+        source.spec,
       );
       fn(net);
-      this.commit(Network.load(net.serialize()));
+      this.commit(Network.load(net.serialize(), source.spec));
       this.trace = null;
+      return true;
     } catch (e) {
       this.notify(e.message);
+      return false;
     }
   }
   addNeuron(layer, position) {
-    this.editNetwork((net) => {
-      if (net.shape[layer] >= 64)
-        throw new Error("Maximum 64 neurons per hidden layer.");
+    const added = this.editNetwork((net) => {
+      if (net.shape[layer] >= net.spec.maxHiddenNeurons)
+        throw new Error(`Maximum ${net.spec.maxHiddenNeurons} neurons per hidden layer.`);
       net.weights[layer - 1].push(
         Array.from(
           { length: net.shape[layer - 1] + 1 },
@@ -239,12 +243,12 @@ export class NetworkMap {
       );
       for (const row of net.weights[layer]) row.splice(row.length - 1, 0, 0);
       net.shape[layer]++;
-      const next = new Network(net.weights, Math.random, net.shape);
+      const next = new Network(net.weights, Math.random, net.shape, net.spec);
       Object.assign(net, next);
       if (position)
         this.positions[`${layer}:${net.shape[layer] - 1}`] = position;
     });
-    this.notify(
+    if (added) this.notify(
       "Neuron added. Drag a connection to the next layer; new outgoing weights start at zero.",
     );
   }
@@ -298,7 +302,7 @@ export class NetworkMap {
     c.clearRect(0, 0, w, h);
     if (!net) return;
     if (!this.trace) {
-      net.predict([0, 0, 0, 0, 0]);
+      net.predict(Array(net.shape[0]).fill(0));
       this.capture(net);
     }
     if (speed > 0) {
@@ -343,9 +347,9 @@ export class NetworkMap {
           y: p.y,
           name:
             layer === 0
-              ? OBSERVATION_NAMES[i]
+              ? this.inputNames[i]
               : layer === net.shape.length - 1
-                ? OUTPUT_NAMES[i]
+                ? this.outputNames[i]
                 : `h${layer}.${i + 1}`,
         };
         this.nodes.push(current);
@@ -354,6 +358,9 @@ export class NetworkMap {
     }
     const node = (l, i) => grid[l][i],
       sel = this.selected;
+    const totalEdges = net.weights.reduce((sum, layer) => sum + layer.reduce((n, row) => n + row.length - 1, 0), 0);
+    const edgeStride = Math.max(1, Math.ceil(totalEdges / this.maxOverviewEdges));
+    let edgeOrdinal = 0;
     for (let l = 0; l < net.weights.length; l++)
       for (let j = 0; j < net.shape[l + 1]; j++)
         for (let i = 0; i < net.shape[l]; i++) {
@@ -361,11 +368,14 @@ export class NetworkMap {
             b = node(l + 1, j),
             value = (this.traceWeights || net.weights)[l][j][i],
             edge = { type: "edge", a, b };
-          this.edges.push(edge);
           const relevant =
               sel?.type === "node" && (sel.id === a.id || sel.id === b.id),
             active = this.phase === l + 1,
-            signal = Math.min(1, Math.abs((this.trace?.[l]?.[i] || 0) * value));
+            signal = Math.min(1, Math.abs((this.trace?.[l]?.[i] || 0) * value)),
+            followed = sel?.type === "edge" && sel.a.id === a.id && sel.b.id === b.id;
+          const show = edgeOrdinal++ % edgeStride === 0 || relevant || followed;
+          if (!show) continue;
+          this.edges.push(edge);
           c.strokeStyle = color(
             value,
             Math.min(
@@ -378,8 +388,6 @@ export class NetworkMap {
           c.moveTo(a.x, a.y);
           c.lineTo(b.x, b.y);
           c.stroke();
-          const followed =
-            sel?.type === "edge" && sel.a.id === a.id && sel.b.id === b.id;
           if (active && (signal > 0.15 || followed)) {
             const progress = this.edgeProgress;
             c.fillStyle = color(value, 0.8);
@@ -445,25 +453,32 @@ export class NetworkMap {
       c.lineWidth = sel?.id === n.id ? 3 : 1.4;
       c.stroke();
       c.shadowBlur = 0;
-      if (n.layer === 0 || n.layer === net.shape.length - 1) {
+      const boundary = n.layer === 0 || n.layer === net.shape.length - 1;
+      const labelStride = Math.max(1, Math.ceil(net.shape[n.layer] / Math.max(1, Math.floor((h - 90) / (net.shape[n.layer] > 12 ? 18 : 32)))));
+      if (boundary && (n.index % labelStride === 0 || sel?.id === n.id || this.hover?.id === n.id)) {
         c.font = "10px monospace";
         c.textAlign = n.layer === 0 ? "left" : "right";
         c.fillStyle = "#36565e";
-        c.fillText(
-          n.name +
-            (n.layer === net.shape.length - 1 &&
-            n.index ===
-              this.trace.at(-1).indexOf(Math.max(...this.trace.at(-1)))
-              ? " ← chosen"
-              : ""),
-          n.layer === 0 ? 5 : w - 5,
-          n.y - (n.layer === 0 ? 6 : 14),
-        );
-        c.fillText(
-          v.toFixed(3),
-          n.layer === 0 ? 5 : w - 5,
-          n.y + (n.layer === 0 ? 8 : 17),
-        );
+        const chosen = n.layer === net.shape.length - 1 && n.index === this.trace.at(-1).indexOf(Math.max(...this.trace.at(-1)));
+        if (net.shape[n.layer] > 12) {
+          c.fillText(`${n.name} ${v.toFixed(2)}${chosen ? " ←" : ""}`, n.layer === 0 ? 5 : w - 5, n.y + 3);
+        } else {
+          c.fillText(
+            n.name +
+              (n.layer === net.shape.length - 1 &&
+              n.index ===
+                this.trace.at(-1).indexOf(Math.max(...this.trace.at(-1)))
+                ? " ← chosen"
+                : ""),
+            n.layer === 0 ? 5 : w - 5,
+            n.y - (n.layer === 0 ? 6 : 14),
+          );
+          c.fillText(
+            v.toFixed(3),
+            n.layer === 0 ? 5 : w - 5,
+            n.y + (n.layer === 0 ? 8 : 17),
+          );
+        }
       }
     }
     c.font = "10px system-ui";
@@ -472,9 +487,9 @@ export class NetworkMap {
     net.shape
       .map((n, i) =>
         i === 0
-          ? "INPUTS"
+          ? `INPUTS · ${n}`
           : i === net.shape.length - 1
-            ? "ACTIONS"
+            ? `ACTIONS · ${n}`
             : `HIDDEN ${i} · ${n}`,
       )
       .forEach((label, i) => c.fillText(label, w * columns[i], 20));

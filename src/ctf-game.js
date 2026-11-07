@@ -1,7 +1,8 @@
 import { rng } from "./network.js";
 import { validateRewards, defaultRewards } from "./rewards.js";
 
-export const WIDTH = 960, HEIGHT = 640, RADIUS = 12;
+import { generateMap, sampleMapId, MAP_PROTOCOL, MAP_SPLITS, LEGACY_MAP, MAP_WIDTH, MAP_HEIGHT } from "./ctf-maps.js";
+export const WIDTH = MAP_WIDTH, HEIGHT = MAP_HEIGHT, RADIUS = 12;
 export const DIRECTIONS = [
   [0, -1], [Math.SQRT1_2, -Math.SQRT1_2], [1, 0],
   [Math.SQRT1_2, Math.SQRT1_2], [0, 1],
@@ -30,43 +31,58 @@ export const CTF_REWARDS = [
   { key: "step", label: "Time cost per action", value: -0.002, description: "Added once per action (up to 4 physics frames), to encourage timely delivery." },
 ];
 export const CTF_DEFAULT_REWARDS = Object.freeze(defaultRewards(CTF_REWARDS));
-export const WALLS = [
-  { x: 200, y: 100, w: 28, h: 210 }, { x: 200, y: 400, w: 190, h: 28 },
-  { x: 450, y: 220, w: 28, h: 250 }, { x: 580, y: 140, w: 180, h: 28 },
-  { x: 690, y: 330, w: 28, h: 210 },
-];
-export const BASE = { x: 70, y: 570 }, FLAG = { x: 885, y: 65 };
+export const WALLS = LEGACY_MAP.walls, BASE = LEGACY_MAP.base, FLAG = LEGACY_MAP.flag;
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
-function blocked(x, y, radius = RADIUS) {
+function blocked(x, y, radius = RADIUS, walls = WALLS) {
   return x < radius || y < radius || x > WIDTH - radius || y > HEIGHT - radius ||
-    WALLS.some((w) => x + radius > w.x && x - radius < w.x + w.w && y + radius > w.y && y - radius < w.y + w.h);
+    walls.some((w) => x + radius > w.x && x - radius < w.x + w.w && y + radius > w.y && y - radius < w.y + w.h);
 }
-export function visible(a, b) {
-  const steps = Math.ceil(distance(a, b) / 8);
-  for (let i = 1; i < steps; i++)
-    if (blocked(a.x + (b.x - a.x) * i / steps, a.y + (b.y - a.y) * i / steps, 0)) return false;
-  return true;
+function rayBoxDistance(origin, dx, dy, wall) {
+  let near = 0, far = Infinity;
+  for (const [position, direction, low, high] of [
+    [origin.x, dx, wall.x, wall.x + wall.w],
+    [origin.y, dy, wall.y, wall.y + wall.h],
+  ]) {
+    if (Math.abs(direction) < 1e-12) {
+      if (position < low || position > high) return Infinity;
+    } else {
+      const a = (low - position) / direction, b = (high - position) / direction;
+      near = Math.max(near, Math.min(a, b)); far = Math.min(far, Math.max(a, b));
+      if (near > far) return Infinity;
+    }
+  }
+  return far < 0 ? Infinity : near;
 }
-function move(entity, dx, dy) {
+export function visible(a, b, walls = WALLS) {
+  return walls.every((wall) => rayBoxDistance(a, b.x - a.x, b.y - a.y, wall) >= 1);
+}
+function move(entity, dx, dy, walls) {
   const oldX = entity.x, oldY = entity.y;
-  if (!blocked(entity.x + dx, entity.y)) entity.x += dx;
-  if (!blocked(entity.x, entity.y + dy)) entity.y += dy;
+  if (!blocked(entity.x + dx, entity.y, RADIUS, walls)) entity.x += dx;
+  if (!blocked(entity.x, entity.y + dy, RADIUS, walls)) entity.y += dy;
   entity.vx = entity.x - oldX;
   entity.vy = entity.y - oldY;
 }
-function rayRange(player, direction) {
-  for (let d = 12; d < 1000; d += 12)
-    if (blocked(player.x + direction[0] * d, player.y + direction[1] * d, 0)) return d / 1000;
-  return 1;
+function rayRange(player, direction, walls) {
+  const [dx, dy] = direction;
+  let nearest = Math.min(
+    dx > 0 ? (WIDTH - player.x) / dx : dx < 0 ? -player.x / dx : Infinity,
+    dy > 0 ? (HEIGHT - player.y) / dy : dy < 0 ? -player.y / dy : Infinity,
+  );
+  for (const wall of walls) nearest = Math.min(nearest, rayBoxDistance(player, dx, dy, wall));
+  return Math.min(1, nearest / 1000);
 }
 
 export class CaptureGame {
-  constructor(random = rng()) { this.random = random; this.reset(); }
-  reset() {
-    this.player = { x: BASE.x, y: BASE.y, vx: 0, vy: 0, health: 100, energy: 100, ammo: 30, fireCooldown: 0, dashCooldown: 0, facing: [1, 0] };
-    this.enemies = [[340, 130], [560, 540], [820, 260], [830, 90]].map(([x, y], i) => ({ x, y, homeX: x, homeY: y, vx: 0, vy: 0, health: 60, cooldown: 50 + this.random() * 80, phase: this.random() * Math.PI * 2, id: i }));
-    this.supplies = [[120, 340, "health"], [360, 520, "ammo"], [550, 80, "energy"], [830, 550, "health"]].map(([x, y, type]) => ({ x, y, type, cooldown: 0 }));
+  constructor(random = rng(), mapId = MAP_SPLITS.test.start) { this.random = random; this.reset(mapId); }
+  reset(mapId = this.mapId) {
+    const map = generateMap(mapId);
+    this.mapId = map.id; this.map = map;
+    this.base = map.base; this.flag = map.flag; this.walls = map.walls;
+    this.player = { x: this.base.x, y: this.base.y, vx: 0, vy: 0, health: 100, energy: 100, ammo: 30, fireCooldown: 0, dashCooldown: 0, facing: [1, 0] };
+    this.enemies = map.enemies.map(([x, y], i) => ({ x, y, homeX: x, homeY: y, vx: 0, vy: 0, health: 60, cooldown: 50 + this.random() * 80, phase: this.random() * Math.PI * 2, id: i }));
+    this.supplies = map.supplies.map(([x, y, type]) => ({ x, y, type, cooldown: 0 }));
     this.bullets = [];
     this.carrying = false;
     this.state = "ready";
@@ -78,7 +94,7 @@ export class CaptureGame {
     this.damage = 0;
     this.frames = 0;
   }
-  goal() { return this.carrying ? BASE : FLAG; }
+  goal() { return this.carrying ? this.base : this.flag; }
   fire(owner, target, enemy = false) {
     const d = Math.max(1, distance(owner, target));
     this.bullets.push({ x: owner.x, y: owner.y, vx: (target.x - owner.x) / d * (enemy ? 5 : 8), vy: (target.y - owner.y) / d * (enemy ? 5 : 8), enemy, life: 180 });
@@ -99,12 +115,12 @@ export class CaptureGame {
       p.energy -= 20;
       p.dashCooldown = 45;
       // Three collision-checked substeps avoid jumping through a wall.
-      for (let i = 0; i < 3; i++) move(p, direction[0] * 5, direction[1] * 5);
+      for (let i = 0; i < 3; i++) move(p, direction[0] * 5, direction[1] * 5, this.walls);
     }
-    move(p, direction[0] * speed, direction[1] * speed);
+    move(p, direction[0] * speed, direction[1] * speed, this.walls);
     p.vx = p.x - oldX; p.vy = p.y - oldY;
     if (ability === 1 && p.ammo > 0 && !p.fireCooldown) {
-      const candidates = this.enemies.filter((e) => e.health > 0 && visible(p, e)).sort((a, b) => distance(p, a) - distance(p, b));
+      const candidates = this.enemies.filter((e) => e.health > 0 && visible(p, e, this.walls)).sort((a, b) => distance(p, a) - distance(p, b));
       this.fire(p, candidates[0] || { x: p.x + p.facing[0], y: p.y + p.facing[1] });
       p.ammo--;
       p.fireCooldown = 14;
@@ -112,13 +128,13 @@ export class CaptureGame {
     for (const e of this.enemies) {
       if (e.health <= 0) continue;
       e.cooldown--;
-      const seesPlayer = distance(e, p) < 330 && visible(e, p);
+      const seesPlayer = distance(e, p) < 330 && visible(e, p, this.walls);
       const target = seesPlayer && distance(e, p) > 170 ? p : {
         x: e.homeX + Math.cos(this.frames / 130 + e.phase) * 65,
         y: e.homeY + Math.sin(this.frames / 150 + e.phase) * 65,
       };
       const d = Math.max(1, distance(e, target));
-      move(e, (target.x - e.x) / d * 1.2, (target.y - e.y) / d * 1.2);
+      move(e, (target.x - e.x) / d * 1.2, (target.y - e.y) / d * 1.2, this.walls);
       if (seesPlayer && e.cooldown <= 0) {
         this.fire(e, p, true);
         e.cooldown = 65 + this.random() * 35;
@@ -128,7 +144,7 @@ export class CaptureGame {
       bullet.x += bullet.vx;
       bullet.y += bullet.vy;
       bullet.life--;
-      if (blocked(bullet.x, bullet.y, 2)) { bullet.life = 0; continue; }
+      if (blocked(bullet.x, bullet.y, 2, this.walls)) { bullet.life = 0; continue; }
       if (bullet.enemy && distance(bullet, p) < RADIUS + 3) {
         const lost = Math.min(10, p.health);
         p.health -= lost;
@@ -156,12 +172,12 @@ export class CaptureGame {
         this.pickups++;
       }
     }
-    if (!this.carrying && distance(p, FLAG) < 28) {
+    if (!this.carrying && distance(p, this.flag) < 28) {
       this.carrying = true;
       this.flagPickups++;
       this.score += 25;
     }
-    if (this.carrying && distance(p, BASE) < 32) { this.state = "won"; this.score += 100; }
+    if (this.carrying && distance(p, this.base) < 32) { this.state = "won"; this.score += 100; }
   }
 }
 
@@ -169,8 +185,8 @@ export function captureInputs(game) {
   const p = game.player;
   const values = [p.x / WIDTH * 2 - 1, p.y / HEIGHT * 2 - 1, p.vx / 18, p.vy / 18,
     p.health / 100, p.energy / 100, p.ammo / 30, p.fireCooldown / 14, p.dashCooldown / 45,
-    Number(game.carrying), (FLAG.x - p.x) / WIDTH, (FLAG.y - p.y) / HEIGHT,
-    (BASE.x - p.x) / WIDTH, (BASE.y - p.y) / HEIGHT, ...p.facing];
+    Number(game.carrying), (game.flag.x - p.x) / WIDTH, (game.flag.y - p.y) / HEIGHT,
+    (game.base.x - p.x) / WIDTH, (game.base.y - p.y) / HEIGHT, ...p.facing];
   const rangeInSector = (objects, direction) => {
     let nearest = 1000;
     for (const object of objects) {
@@ -179,12 +195,12 @@ export function captureInputs(game) {
     }
     return Math.min(1, nearest / 1000);
   };
-  const enemies = game.enemies.filter((e) => e.health > 0 && visible(p, e));
-  const supplies = game.supplies.filter((s) => !s.cooldown && visible(p, s));
-  const bullets = game.bullets.filter((b) => b.enemy && visible(p, b));
-  for (const direction of DIRECTIONS) values.push(rayRange(p, direction), rangeInSector(enemies, direction), rangeInSector(supplies, direction), rangeInSector(bullets, direction));
+  const enemies = game.enemies.filter((e) => e.health > 0 && visible(p, e, game.walls));
+  const supplies = game.supplies.filter((s) => !s.cooldown && visible(p, s, game.walls));
+  const bullets = game.bullets.filter((b) => b.enemy && visible(p, b, game.walls));
+  for (const direction of DIRECTIONS) values.push(rayRange(p, direction, game.walls), rangeInSector(enemies, direction), rangeInSector(supplies, direction), rangeInSector(bullets, direction));
   for (const e of game.enemies) {
-    const seen = e.health > 0 && visible(p, e);
+    const seen = e.health > 0 && visible(p, e, game.walls);
     values.push(...(seen ? [(e.x - p.x) / WIDTH, (e.y - p.y) / HEIGHT, e.vx / 1.2, e.vy / 1.2, e.health / 60, Math.min(1, distance(p, e) / 1000), 1, 1] : [0, 0, 0, 0, 0, 0, 0, Number(e.health > 0)]));
   }
   for (const s of game.supplies) values.push((s.x - p.x) / WIDTH, (s.y - p.y) / HEIGHT, ["health", "ammo", "energy"].indexOf(s.type) / 2, Number(!s.cooldown));
@@ -212,7 +228,13 @@ export function captureTransition(game, action, rewards = CTF_DEFAULT_REWARDS) {
 }
 export const CTF_ENV = {
   spec: CTF_SPEC, defaultShape: [96, 48, 32, 24],
-  createEpisode: (random) => { const game = new CaptureGame(random); game.state = "playing"; return game; },
+  mapProtocol: MAP_PROTOCOL,
+  createEpisode: (random, context = {}) => {
+    const id = context.purpose === "evaluation"
+      ? MAP_PROTOCOL.validationMapIds[(context.evaluationIndex || 0) % MAP_PROTOCOL.validationMapIds.length]
+      : sampleMapId(random, "training");
+    const game = new CaptureGame(random, id); game.state = "playing"; return game;
+  },
   inputs: captureInputs, transition: captureTransition,
   validateRewards: (config) => validateRewards(config, CTF_REWARDS),
   score: (game) => game.score, hits: (game) => game.hits,

@@ -1,15 +1,34 @@
 import { Network } from "./network.js";
-import { CaptureGame, WIDTH, HEIGHT, WALLS, BASE, FLAG, DIRECTIONS, CTF_SPEC, CTF_ENV, CTF_REWARDS, CTF_INPUT_NAMES, CTF_OUTPUT_NAMES, captureInputs, captureTransition } from "./ctf-game.js";
+import { CaptureGame, WIDTH, HEIGHT, DIRECTIONS, CTF_SPEC, CTF_ENV, CTF_REWARDS, CTF_INPUT_NAMES, CTF_OUTPUT_NAMES, captureInputs, captureTransition } from "./ctf-game.js";
+import { NetworkMap } from "./network-map.js";
+import { MAP_SPLITS, MAP_PROTOCOL, mapSplit, sampleMapId } from "./ctf-maps.js";
 import { RewardEditor } from "./reward-editor.js";
 
 const $ = (id) => document.getElementById(id);
 const ctx = $("game").getContext("2d");
-const game = new CaptureGame(Math.random);
+const requestedMap = Number(new URL(location.href).searchParams.get("map") || MAP_SPLITS.test.start);
+const initialMap = Number.isInteger(requestedMap) && requestedMap >= 1 && requestedMap <= MAP_PROTOCOL.total ? requestedMap : MAP_SPLITS.test.start;
+const game = new CaptureGame(Math.random, initialMap);
 const rewardEditor = new RewardEditor($("reward-fields"), CTF_REWARDS, "robot-capture-rewards-v1");
 const STORAGE = "robot-capture-model-v1";
 let network = new Network(null, Math.random, CTF_ENV.defaultShape, CTF_SPEC);
 let model = { ...network.serialize(), untrained: true }, worker = null, mode = "human", last = 0, elapsed = 0, uiTicks = 0;
 let liveRewards = rewardEditor.read(), noticeTimer;
+const map = new NetworkMap($("network-map"), {
+  getNetwork: () => network,
+  inputNames: CTF_INPUT_NAMES, outputNames: CTF_OUTPUT_NAMES, maxOverviewEdges: 2500,
+  commit: (next) => {
+    if (worker) { stopTraining(); $("train-status").textContent = "Training stopped for a graph edit"; }
+    install({ ...next.serialize(), method: "manual-experiment" });
+  },
+  notify: (message) => notice(message),
+});
+$("open-training").onclick = () => $("training-settings").showModal();
+$("close-training").onclick = () => $("training-settings").close();
+$("train-shortcut").onclick = () => $("train").click();
+$("watch-shortcut").onclick = () => $("watch").click();
+$("edit-brain").onclick = () => $("inspect").click();
+$("graph-step").onclick = () => { $("graph-speed").value = "0"; map.step(captureInputs(game)); };
 const keys = new Set();
 const touchPointers = new Map();
 for (const button of document.querySelectorAll("[data-keys]")) {
@@ -35,6 +54,7 @@ function install(data, persist = true) {
   const loaded = Network.load(data, CTF_SPEC);
   network = loaded;
   model = data;
+  map.reset();
   if (persist) {
     try { localStorage.setItem(STORAGE, JSON.stringify(data)); }
     catch { notice("Model is usable, but browser storage is unavailable. Export it to keep a copy."); }
@@ -42,10 +62,14 @@ function install(data, persist = true) {
   $("experiment-shape").textContent = network.shape.join(" → ");
   $("hidden-count").textContent = network.shape.slice(1, -1).join(" / ");
   const count = network.weights.flat(2).length;
+  $("graph-structure").textContent = `${network.shape.join(" → ")} · ${count.toLocaleString()} parameters`;
   $("parameter-count").textContent = `${count.toLocaleString()} parameters`;
   $("model-info").textContent = data.method === "double-dqn" && Number.isFinite(data.episodes) && Number.isFinite(data.score)
     ? `Saved training run: ${data.episodes.toLocaleString()} episodes. Saved evaluation: ${data.score.toFixed(1)} mission points. Continued training starts from these weights.`
     : data.untrained ? "Random weights, no pretrained policy. Train the robot to learn this mission; navigating and fighting may need substantial experimentation." : "Unmeasured policy. Weights are manually edited; train and evaluate to measure their performance.";
+  $("map-training-info").textContent = data.mapProtocol?.version === MAP_PROTOCOL.version
+    ? `${new Set(data.trainingMapIds || []).size} distinct training maps recorded in this model's run history. Validation maps: 1,001–1,005. Held-out test maps: 2,001–10,000.`
+    : "Map-training history is not recorded for these weights. New runs use only maps 1–1,000; validation uses 1,001–1,005. Imported weights may have an unknown history.";
   $("checkpoint-rewards").textContent = data.untrained ? "Random weights; no training run yet." : rewardEditor.describe(data.rewardConfig);
 }
 try {
@@ -72,7 +96,7 @@ function start() {
   sync();
 }
 $("play").onclick = start;
-$("watch").onclick = () => { setMode("ai"); game.reset(); start(); };
+$("watch").onclick = () => { if ($("training-settings").open) $("training-settings").close(); setMode("ai"); game.reset(); start(); };
 $("restart").onclick = () => { game.reset(); keys.clear(); sync(); };
 $("pause").onclick = () => {
   if (game.state === "playing") { game.state = "paused"; keys.clear(); sync(); }
@@ -80,7 +104,7 @@ $("pause").onclick = () => {
 };
 const controlKeys = ["w", "a", "s", "d", "arrowup", "arrowleft", "arrowdown", "arrowright", " ", "shift"];
 window.addEventListener("keydown", (event) => {
-  if (event.target.closest("input,textarea,button,select,a,dialog")) return;
+  if (event.defaultPrevented || event.target.closest("input,textarea,button,select,a,dialog,.neural-panel")) return;
   const key = event.key.toLowerCase();
   if (controlKeys.includes(key)) {
     event.preventDefault();
@@ -105,6 +129,32 @@ function humanAction() {
   const direction = DIRECTIONS.findIndex(([x, y]) => Math.abs(x - vector[0]) < 0.01 && Math.abs(y - vector[1]) < 0.01);
   return ability * 8 + Math.max(0, direction);
 }
+function showMap() {
+  const range = MAP_SPLITS[mapSplit(game.mapId)];
+  $("map-set").value = game.map.split;
+  $("map-id").min = range.start; $("map-id").max = range.end; $("map-id").value = game.mapId;
+  $("map-info").textContent = `Map ${game.mapId.toLocaleString()} / 10,000 · ${range.label} · seed ${game.map.seed} · changing maps restarts the mission`;
+  $("game").dataset.mapId = game.mapId;
+}
+function loadMap(id) {
+  try {
+    const split = mapSplit(id);
+    if (split !== $("map-set").value) throw new Error("Choose a map ID inside the selected map set.");
+    const wasPlaying = game.state === "playing";
+    game.reset(id); if (wasPlaying) game.state = "playing";
+    keys.clear(); touchPointers.clear(); map.reset();
+    const url = new URL(location.href); url.searchParams.set("map", id); history.replaceState(null, "", url);
+    showMap(); sync();
+  } catch (error) { notice(error.message); }
+}
+$("map-controls").onsubmit = (event) => { event.preventDefault(); loadMap(Number($("map-id").value)); };
+$("map-set").onchange = () => loadMap(MAP_SPLITS[$("map-set").value].start);
+$("map-random").onclick = () => {
+  const split = $("map-set").value, range = MAP_SPLITS[split];
+  let id = sampleMapId(Math.random, split);
+  if (id === game.mapId) id = id === range.end ? range.start : id + 1;
+  loadMap(id);
+};
 function sync() {
   const p = game.player;
   $("score").textContent = game.score;
@@ -126,6 +176,7 @@ function disc(x, y, radius, fill) {
   ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill();
 }
 function draw() {
+  const { base: BASE, flag: FLAG, walls: WALLS } = game;
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   ctx.fillStyle = "#a5b89a12";
   for (let x = 16; x < WIDTH; x += 24) for (let y = 16; y < HEIGHT; y += 24) ctx.fillRect(x, y, 1, 1);
@@ -177,7 +228,11 @@ function frame(time) {
     }
   }
   draw();
+  if (uiTicks % 6 === 0 && !worker) { network.predict(captureInputs(game)); map.capture(network); }
+  map.draw(time, Number($("graph-speed").value));
   if (++uiTicks % 15 === 0) {
+    $("train-shortcut").textContent = worker ? "□ Stop training" : "✧ Train robot";
+    $("network-training-status").textContent = `${$("train-status").textContent} · ${$("epoch").textContent} episodes · validation points: ${$("evaluation").textContent}`;
     const values = captureInputs(game);
     if ($("sensor-details").open) $("sensor-values").textContent = CTF_INPUT_NAMES.map((name, i) => `${String(i + 1).padStart(2)}  ${name.padEnd(30)} ${values[i].toFixed(4)}`).join("\n");
     if ($("output-values").parentElement.open) {
@@ -192,6 +247,7 @@ function stopTraining() {
   $("train").textContent = "✧ Train robot ↗";
   $("epochs").disabled = false; $("fresh").disabled = false; $("policy-selection").disabled = false;
   rewardEditor.lock(false);
+  map.endTraining();
 }
 $("train").onclick = () => {
   if (worker) { stopTraining(); $("train-status").textContent = "Stopped; latest saved checkpoint retained"; return; }
@@ -208,6 +264,8 @@ $("train").onclick = () => {
     $("progress").style.width = "0%";
     worker.onmessage = ({ data }) => {
       if (data.type === "progress") {
+        if (data.snapshot) map.training(data.snapshot);
+        if (data.trainingMapCount !== undefined) $("map-training-info").textContent = `${data.trainingMapCount} distinct training maps visited this run/history. Training pool: 1–1,000; validation: 1,001–1,005; test maps 2,001–10,000 are excluded.`;
         $("train-status").textContent = "Simulating at full speed";
         $("epoch").textContent = `${data.episode.toLocaleString()} / ${data.episodes.toLocaleString()}`;
         $("progress").style.width = `${data.episode / data.episodes * 100}%`;
@@ -271,4 +329,4 @@ $("apply-model").onclick = () => {
     $("editor-status").textContent = "Applied to the live controller and saved in this browser. Old evaluation metadata was cleared.";
   } catch (error) { $("editor-status").textContent = "Could not apply: " + error.message; }
 };
-sync(); requestAnimationFrame(frame);
+showMap(); sync(); requestAnimationFrame(frame);

@@ -13,7 +13,7 @@ npm start
 
 Open **http://localhost:3000** in Chrome, Safari, or Firefox. No `npm install`, Python, ML libraries, GPU, or internet connection is needed to run it. Stop with Control-C. Use `PORT=3001 npm start` if port 3000 is occupied.
 
-For the larger **Robot Capture** experiment, follow **Robot Capture** or open **http://localhost:3000/ctf.html**. It has **96 inputs, 24 actions, editable rewards, and 1–4 hidden layers of 1–128 neurons each**. Navigate cover, fight four sentries, gather supplies, retrieve the flag, and return home. See [ROBOT_CAPTURE.md](ROBOT_CAPTURE.md) for the controls, sensors, exact reward formulas, and training behavior.
+For the larger **Robot Capture** experiment, follow **Robot Capture** or open **http://localhost:3000/ctf.html**. It has **96 inputs, 24 actions, a live editable neural network map, editable rewards, and 1–4 hidden layers of 1–128 neurons each**. Its 10,000 seeded arenas are split into 1,000 training, 1,000 validation, and 8,000 held-out test maps; the live game defaults to held-out play, and training never samples that test pool. Navigate cover, fight four sentries, gather supplies, retrieve the flag, and return home. See [ROBOT_CAPTURE.md](ROBOT_CAPTURE.md) for the controls, sensors, exact reward formulas, and training behavior.
 
 ## Play and train
 

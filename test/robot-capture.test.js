@@ -8,7 +8,7 @@ import { CaptureGame, CTF_ENV, CTF_SPEC, CTF_INPUT_NAMES, CTF_OUTPUT_NAMES, CTF_
 
 const zeros = (fields) => Object.fromEntries(fields.map(({ key }) => [key, 0]));
 const quietMission = () => {
-  const game = new CaptureGame(rng());
+  const game = new CaptureGame(rng(), 0);
   game.state = "playing";
   for (const enemy of game.enemies) enemy.health = 0;
   return game;
