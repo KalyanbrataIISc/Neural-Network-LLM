@@ -1,13 +1,19 @@
 import { train, evaluate } from "../src/trainer.js";
+import { CTF_ENV, CTF_SPEC } from "../src/ctf-game.js";
 import { Network } from "../src/network.js";
 import { writeFileSync, readFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 const args = process.argv.slice(2),
   option = (name, fallback) =>
     args.includes(name) ? args[args.indexOf(name) + 1] : fallback;
+const gameName = option("--game", "breakout");
+if (!["breakout", "ctf"].includes(gameName)) throw new Error("Use --game breakout or --game ctf.");
+const environment = gameName === "ctf" ? CTF_ENV : undefined;
 const episodes = Number(option("--episodes", "5000")),
-  output = option("--out", "models/pretrained.json"),
-  resume = option("--resume", null);
+  output = option("--out", gameName === "ctf" ? "models/robot-capture.json" : "models/pretrained.json"),
+  resume = option("--resume", null),
+  rewardsFile = option("--rewards", null);
+const rewardConfig = rewardsFile ? JSON.parse(readFileSync(rewardsFile, "utf8")) : undefined;
 const initialModel = resume ? JSON.parse(readFileSync(resume, "utf8")) : null;
 mkdirSync(dirname(output), { recursive: true });
 function save(model) {
@@ -15,11 +21,14 @@ function save(model) {
   renameSync(output + ".tmp", output);
 }
 console.log(
-  `Training Double DQN for ${episodes.toLocaleString()} episodes; saving best weights to ${output}`,
+  `Training ${gameName} Double DQN for ${episodes.toLocaleString()} episodes; saving checkpoints to ${output}`,
 );
 const model = train({
   episodes,
   initialModel,
+  rewardConfig,
+  checkpointSelection: option("--save-policy", "score"),
+  environment,
   onCheckpoint: save,
   onProgress: (p) => {
     if (p.episode % 100 === 0 || p.episode === episodes)
@@ -29,4 +38,5 @@ const model = train({
   },
 });
 save(model);
-console.log("Best checkpoint evaluation:", evaluate(Network.load(model)));
+console.log("Run reward coefficients:", model.rewardConfig);
+console.log("Saved checkpoint evaluation:", evaluate(Network.load(model, gameName === "ctf" ? CTF_SPEC : undefined), 5, 3600, environment));

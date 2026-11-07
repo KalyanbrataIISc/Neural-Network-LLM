@@ -14,7 +14,7 @@
           ><span class="brand-icon">▥</span> BREAKOUT<span class="muted">
             / LAB</span
           ></a
-        ><span class="local"
+        ><a class="experiment-link" href="/ctf.html">Try Robot Capture →</a><span class="local"
           ><i></i> RUNNING LOCALLY <span class="version">v.01</span></span
         >
       </header>
@@ -111,6 +111,12 @@
               <span id="parameter-count">819 parameters</span
               ><span>Double DQN</span>
             </div>
+            <p class="network-limits">Exactly <b>2 hidden layers</b>, each with <b>1–64 neurons</b>. Fixed: 5 inputs and 3 actions (4 layers including input/output). Maximum: 4,739 parameters. These are this experiment's limits.</p>
+            <details class="reward-settings">
+              <summary>Reinforcement rewards · view & edit</summary>
+              <div id="reward-fields"></div>
+              <p>Double DQN: discount factor 0.99, 30,000-transition replay buffer, batches of 32, Huber loss, Adam at learning rate 0.0006. Fresh exploration starts at 100%, resumed training at 20%, decaying toward 3%. Episodes end on the first missed ball, board completion, or 3,600 frames. A time limit has no extra reward and still bootstraps the next Q value.</p>
+            </details>
             <label class="field-label" for="epochs">Simulation budget</label
             ><select id="epochs">
               <option value="1000">Quick run · 1,000 episodes</option>
@@ -120,6 +126,9 @@
               <option value="25000">Deep run · 25,000 episodes</option>
               <option value="100000">Marathon · 100,000 episodes</option>
             </select>
+            <label class="field-label" for="policy-selection">Policy to save</label>
+            <select id="policy-selection"><option value="score">Best evaluation game points</option><option value="latest">Latest evaluated policy · inspect reward effects</option></select>
+            <p class="reward-average">Best points may retain the initial policy. Choose Latest to inspect new reward-driven behavior. Checkpoints update every 100 episodes and at completion.</p>
             <label class="fresh-option"
               ><input id="fresh" type="checkbox" /> Reset weights; keep my
               neuron structure</label
@@ -136,6 +145,8 @@
               <span id="throughput">0 frames / sec</span
               ><span id="exploration">Exploration: 100%</span>
             </div>
+            <p id="reward-average" class="reward-average">Mean episode reward: —</p>
+            <details class="reward-settings"><summary>Mean reward by term</summary><p id="reward-breakdown">Start training to measure each contribution.</p></details>
             <div class="loss-header">
               <span>EVALUATION SCORE</span><b id="loss">— <small>pts</small></b>
             </div>
@@ -146,7 +157,7 @@
               aria-label="Average evaluation score over reinforcement-learning episodes"
             ></canvas>
             <div class="chart-caption">
-              <span>HIGHER IS BETTER · 5 TEST GAMES</span
+              <span>GAME POINTS · 5 TEST GAMES</span
               ><span id="samples">0 simulated frames</span>
             </div>
           </section>
@@ -175,6 +186,7 @@
                 hidden
               />
             </div>
+          <details class="reward-settings"><summary>Saved training run rewards</summary><p id="checkpoint-rewards">No training run loaded.</p></details>
           </section>
         </aside>
       </div>
@@ -206,6 +218,7 @@
         velocity_y are divided by 6. Outputs: move_left, stay, move_right. The
         highest Q value wins.
       </p>
+      <p class="network-limits">Architecture limits: exactly <b>2 hidden layers</b>, with <b>1–64 neurons each</b>. The 5 inputs and 3 outputs are fixed. Layers cannot be added or removed in this experiment. Weights and biases must be finite and between −1,000,000 and +1,000,000. Imported files may be at most 1,500,000 bytes.</p>
       <label class="field-label" for="inspect-layer">Explore a layer</label
       ><select id="inspect-layer">
         <option value="0">Hidden layer 1 · tanh</option>
@@ -219,6 +232,7 @@
           − Remove last neuron
         </button>
       </div>
+      <p id="layer-limit" class="input-explanation" role="status"></p>
       <p id="neuron-equation"></p>
       <div class="table-scroll"><table id="weight-table"></table></div>
       <details>

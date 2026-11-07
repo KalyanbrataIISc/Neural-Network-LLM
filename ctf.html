@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#101313" />
+  <title>Robot Capture — Neural Network Lab</title>
+  <link rel="stylesheet" href="/src/style.css" />
+  <link rel="stylesheet" href="/src/ctf.css" />
+</head>
+<body>
+<main>
+  <header>
+    <a class="brand" href="/ctf.html"><span class="brand-icon">⚑</span> ROBOT<span class="muted"> / CAPTURE</span></a>
+    <a class="experiment-link" href="/">← Breakout Lab</a>
+    <span class="local"><i></i> RUNNING LOCALLY <span class="version">v.02</span></span>
+  </header>
+  <section class="intro">
+    <div><div class="eyebrow">EXPERIMENT 002 · ROBOT CAPTURE-THE-FLAG</div>
+      <h1>Find the flag. <span>Find a way home.</span></h1>
+      <p>Four armed sentries. A maze of cover. Limited supplies.<br class="desktop" /> Play the mission, then teach a network to navigate, fight, and return.</p>
+    </div>
+    <div class="experiment"><span>A BIGGER BRAIN</span><b>96 inputs. 24 actions.</b><span id="experiment-shape">96 → 48 → 32 → 24</span></div>
+  </section>
+  <div class="workspace">
+    <section class="game-panel">
+      <div class="panel-top">
+        <div class="tabs" aria-label="Robot controller"><button id="human" class="selected" aria-pressed="true">⌨ Human control</button><button id="ai" aria-pressed="false">✧ Neural network</button></div>
+        <span id="live-label" class="live"><i></i> HUMAN IN CONTROL</span>
+      </div>
+      <div class="scoreboard ctf-scoreboard">
+        <div><span>MISSION POINTS</span><strong id="score">0</strong></div>
+        <div><span>HEALTH</span><strong id="health">100</strong></div>
+        <div><span>AMMO / ENERGY</span><strong id="resources">30 / 100</strong></div>
+        <div><span>OBJECTIVE</span><strong id="objective">GET FLAG</strong></div>
+      </div>
+      <div class="arena">
+        <canvas id="game" width="960" height="640" tabindex="0" aria-label="Robot capture-the-flag. Arrow keys or WASD move, Space fires while moving, Shift dashes. Collect the orange flag and return to the cyan base."></canvas>
+        <div id="overlay" class="overlay">
+          <div class="overlay-symbol">⚑</div><span class="eyebrow" id="overlay-tag">ONE ROBOT. TWO OBJECTIVES.</span>
+          <h2 id="overlay-title">Out. And back.</h2><p id="overlay-copy">Take the orange flag. Return to your cyan base alive.</p>
+          <button id="play" class="primary">Start mission ↗</button><small>WASD / arrows · Space fire · Shift dash</small>
+        </div>
+      </div>
+      <div class="game-footer"><span><kbd>WASD</kbd> move · <kbd>space</kbd> fire · <kbd>shift</kbd> dash</span><div><button id="pause" class="text-button">Ⅱ Pause</button><button id="restart" class="text-button">↻ Restart</button></div></div>
+      <div class="touch-controls" aria-label="Touch game controls">
+        <div class="direction-pad">
+          <button data-keys="w a" aria-label="Move northwest">↖</button><button data-keys="w" aria-label="Move north">↑</button><button data-keys="w d" aria-label="Move northeast">↗</button>
+          <button data-keys="a" aria-label="Move west">←</button><span></span><button data-keys="d" aria-label="Move east">→</button>
+          <button data-keys="s a" aria-label="Move southwest">↙</button><button data-keys="s" aria-label="Move south">↓</button><button data-keys="s d" aria-label="Move southeast">↘</button>
+        </div>
+        <button data-keys="fire" class="touch-ability">Fire</button><button data-keys="shift" class="touch-ability">Dash</button>
+      </div>
+      <div class="mission-notes">
+        <p><b>Mission:</b> pick up the orange flag in the top-right, then return to the cyan base in the bottom-left. Walls stop movement and shots. Health (green), ammo (gold), and energy (cyan) packs replenish after 600 frames. Carrying the flag slows you down.</p>
+        <p><b>24 actions:</b> 8 compass directions × 3 abilities (move, fire, dash). Every AI action includes movement. Space or Shift without a direction uses your facing direction. Fire aims at the nearest enemy with a clear line of sight; with no visible enemy it fires along your movement direction. The same aiming rule applies to both controllers.</p>
+        <p><b>Limits:</b> 100 health, 30 ammo, 100 energy. Shots cost 1 ammo with a 14-frame cooldown. Dash costs 20 energy with a 45-frame cooldown. A mission ends on delivery, destruction, or 3,600 frames (60 simulated seconds). Enemy patrols and firing are scripted opponents; the network receives no example actions.</p>
+        <p id="action-readout" class="action-readout">Controller: human · firing uses shared automatic aim.</p>
+        <details class="reward-settings"><summary>Last action reward by term</summary><p id="live-breakdown">Start a mission to inspect actual contributions.</p></details>
+        <p id="live-reward" class="reward-average">Live reward preview: — (using the reward editor's current coefficients)</p>
+      </div>
+    </section>
+    <aside>
+      <section class="training card">
+        <div class="card-heading"><span class="eyebrow">LEARN THE WHOLE MISSION</span><span class="chip">DOUBLE DQN</span></div>
+        <h2>More to learn<span>.</span></h2>
+        <p id="model-info">New experiment: random weights, no pretrained policy. Complex navigation and combat may require substantial training; success is not guaranteed.</p>
+        <div class="architecture"><div><b>96</b><span>INPUTS</span></div><em>→</em><div><b id="hidden-count">48 / 32</b><span>HIDDEN</span></div><em>→</em><div><b>24</b><span>ACTIONS</span></div></div>
+        <div class="network-meta"><span id="parameter-count">7,016 parameters</span><span>tanh → linear Q</span></div>
+        <p class="network-limits"><b>1–4 hidden layers</b>, each with <b>1–128 neurons</b>. Fixed: 96 inputs and 24 outputs. At most 6 layers including input/output and 65,048 parameters. These limits belong to Robot Capture; Breakout keeps its own limits.</p>
+        <label class="field-label" for="epochs">Simulation budget</label>
+        <select id="epochs"><option value="100">First experiment · 100 episodes</option><option value="500" selected>Short run · 500 episodes</option><option value="1000">Standard run · 1,000 episodes</option><option value="5000">Long run · 5,000 episodes</option><option value="25000">Deep run · 25,000 episodes</option></select>
+        <label class="field-label" for="policy-selection">Policy to save</label>
+            <select id="policy-selection"><option value="score">Best evaluation game points</option><option value="latest">Latest evaluated policy · inspect reward effects</option></select>
+            <p class="reward-average">Best points may retain the initial policy. Choose Latest to inspect new reward-driven behavior. Checkpoints update every 100 episodes and at completion.</p>
+            <label class="fresh-option"><input id="fresh" type="checkbox" /> Reset weights; keep the architecture</label>
+        <button id="train" class="primary full">✧ Train robot <span>↗</span></button>
+        <div class="training-status"><span id="train-status" role="status">Ready to experiment</span><span id="epoch">0 / 500</span></div>
+        <div class="progress"><div id="progress"></div></div>
+        <div class="simulation-metrics"><span id="throughput">0 frames / sec</span><span id="exploration">Exploration: —</span></div>
+        <p id="reward-average" class="reward-average">Mean episode reward: —</p>
+        <details class="reward-settings"><summary>Mean reward by term</summary><p id="reward-breakdown">Start training to measure each contribution.</p></details>
+        <div class="loss-header"><span>EVALUATION MISSION POINTS</span><b id="evaluation">—</b></div>
+        <p class="reward-average">Mean points across 5 fixed-seed missions, with no exploration. Game points: +5 per enemy hit, +15 per defeat, +25 for flag pickup, +100 for delivery. Best-points mode selects by these points, then hit count. Latest mode saves the most recently evaluated policy. Reward edits do not change game points.</p>
+        <button id="watch" class="deploy">Watch AI play →</button><button id="inspect" class="inspect-button">◎ Edit architecture & weights</button>
+        <div class="model-actions"><button id="export">↓ Export model</button><button id="import">↑ Import model</button><input id="file" type="file" accept=".json,application/json" hidden /></div>
+        <details class="reward-settings"><summary>Saved training run rewards</summary><p id="checkpoint-rewards">Random weights; no training run yet.</p></details>
+      </section>
+    </aside>
+  </div>
+  <div class="ctf-explain">
+    <section class="card">
+      <div class="card-heading"><span class="eyebrow">THE OBJECTIVE YOU TEACH</span><span class="chip">EDITABLE</span></div>
+      <h2>Every reward, in the open.</h2>
+      <div id="reward-fields" class="reward-settings"></div>
+      <p class="reward-average">Discount factor γ = 0.99. Double DQN uses reward + γ × next Q value, except on delivery or destruction. The 3,600-frame time limit has no extra penalty and still bootstraps the next Q value. Hidden activations are tanh; outputs are linear Q values. Exploration decreases toward 3%; resumed runs begin at 20%, fresh runs at 100%. Training seed: 2026; evaluation seeds: 9000–9004. Reset weights uses the same seed for repeatable comparisons. Replay: 30,000 transitions, batches of 32; Huber loss and Adam (learning rate 0.0006).</p>
+      <p class="reward-average">Try setting objective progress to 0 to test sparse rewards, raising the damage penalty to encourage caution, or raising the flag and delivery rewards relative to combat. Use Reset weights for a fresh comparison. Reward values are incentives, not guarantees of behavior.</p>
+    </section>
+    <section class="card">
+      <div class="card-heading"><span class="eyebrow">WHAT THE NETWORK CAN SEE</span><span class="chip">96 VALUES</span></div>
+      <h2>Sensors. State. Choices.</h2>
+      <ul class="sensor-guide">
+        <li><b>16 robot/objective values:</b> position, velocity, health, energy, ammo, shot/dash cooldowns, flag possession, offsets to flag and base, and facing direction.</li>
+        <li><b>32 directional sensors:</b> 8 compass sectors × ranges to walls, visible enemies, visible supplies, and visible hostile projectiles. Range is divided by 1,000; 1 means no detection. Wall rays sample every 12 pixels.</li>
+        <li><b>32 enemy values:</b> 4 fixed enemy slots × relative position, velocity, health, range, visibility, and alive state. Hidden enemies expose only alive state; other values are zero.</li>
+        <li><b>16 supply values:</b> 4 known supply stations × relative position, type (0 health / 0.5 ammo / 1 energy), and availability. Supply locations and cooldown availability are known.</li>
+      </ul>
+      <p class="reward-average">Coordinates/offsets scale by map width and height. Health/energy scale by 100, ammo by 30, robot velocity by 18, enemy velocity by 1.2, enemy health by 60. Cooldowns scale by their maximum. All inputs are clamped to [−1, 1]. No raw pixels or pathfinding solution is given to the network.</p>
+      <details id="sensor-details" class="reward-settings"><summary>Inspect all 96 live inputs</summary><pre id="sensor-values"></pre></details>
+      <details class="reward-settings"><summary>All 24 output names and current Q values</summary><pre id="output-values"></pre></details>
+    </section>
+  </div>
+  <footer><span><i></i> Experiment with incentives. Watch what emerges.</span><span>SENSE → DECIDE → CAPTURE</span></footer>
+  <p id="notice" role="status" class="notice" hidden></p>
+</main>
+<dialog id="inspector">
+  <div class="inspector-heading"><div><span class="eyebrow">THE ROBOT'S BRAIN</span><h2>Make room for a new strategy.</h2></div><button id="close-inspector" class="text-button" aria-label="Close network editor">✕ Close</button></div>
+  <p class="network-limits">96 inputs → 1–4 hidden layers of 1–128 neurons each → 24 outputs. Weights and biases: finite numbers from −1,000,000 to +1,000,000. Imported files: at most 8,000,000 bytes. Breakout checkpoints use different inputs and outputs and cannot be imported here.</p>
+  <label class="field-label" for="hidden-sizes">Hidden layer sizes, separated by commas</label><input id="hidden-sizes" class="architecture-input" value="48, 32" />
+  <p class="input-explanation">Rebuilding resets all weights to random values and stops active training. To preserve or edit specific weights, use the complete JSON below instead.</p>
+  <button id="rebuild" class="deploy">Rebuild with random weights</button>
+  <label class="field-label" for="model-json">Complete model JSON · every weight and bias is editable</label>
+  <textarea id="model-json" spellcheck="false" aria-label="Editable robot network JSON"></textarea>
+  <button id="apply-model" class="primary">Apply weight edits →</button>
+  <p id="editor-status" role="status" class="input-explanation">Edits are drafts until applied. Applying stops active training and clears old evaluation metadata.</p>
+</dialog>
+<script type="module" src="/src/ctf-app.js"></script>
+</body>
+</html>

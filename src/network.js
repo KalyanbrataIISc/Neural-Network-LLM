@@ -9,12 +9,17 @@ export const INPUT_NAMES = [
 ];
 export const OUTPUT_NAMES = ["move_left", "stay", "move_right"];
 export const LAYER_NAMES = ["hidden_1", "hidden_2", "actions"];
-export function neuronNames(layer, shape = SHAPE) {
-  return layer === 2
-    ? OUTPUT_NAMES
+export const BREAKOUT_SPEC = Object.freeze({
+  inputs: INPUT_NAMES, outputs: OUTPUT_NAMES, minHiddenLayers: 2,
+  maxHiddenLayers: 2, maxHiddenNeurons: 64,
+});
+const layerName = (layer, shape) => layer === shape.length - 2 ? "actions" : `hidden_${layer + 1}`;
+export function neuronNames(layer, shape = SHAPE, outputs = OUTPUT_NAMES) {
+  return layer === shape.length - 2
+    ? outputs
     : Array.from(
         { length: shape[layer + 1] },
-        (_, i) => `${LAYER_NAMES[layer]}_${String(i + 1).padStart(2, "0")}`,
+        (_, i) => `${layerName(layer, shape)}_${String(i + 1).padStart(2, "0")}`,
       );
 }
 
@@ -37,7 +42,8 @@ export function argmax(values) {
 // neuron's row is its bias. serialize() exposes the same data with names so
 // every connection can be edited in plain JSON without understanding indices.
 export class Network {
-  constructor(weights, random = Math.random, shape = SHAPE) {
+  constructor(weights, random = Math.random, shape = SHAPE, spec = BREAKOUT_SPEC) {
+    this.spec = spec;
     this.shape = [...shape];
     this.weights =
       weights ||
@@ -74,10 +80,10 @@ export class Network {
         const w = this.weights[l][j];
         let sum = w[a.length];
         for (let i = 0; i < a.length; i++) sum += w[i] * a[i];
-        out[j] = l === 2 ? sum : Math.tanh(sum);
+        out[j] = l === this.weights.length - 1 ? sum : Math.tanh(sum);
       }
     }
-    return this.activations[3];
+    return this.activations.at(-1);
   }
   action(input) {
     return argmax(this.predict(input));
@@ -91,16 +97,16 @@ export class Network {
       a = this.activations,
       d = this.deltas;
     const error = pred - target;
-    d[3].fill(0);
-    d[3][action] = Math.max(-1, Math.min(1, error));
-    for (let l = 2; l > 0; l--)
+    d.at(-1).fill(0);
+    d.at(-1)[action] = Math.max(-1, Math.min(1, error));
+    for (let l = this.weights.length - 1; l > 0; l--)
       for (let i = 0; i < this.shape[l]; i++) {
         let sum = 0;
         for (let j = 0; j < this.shape[l + 1]; j++)
           sum += this.weights[l][j][i] * d[l + 1][j];
         d[l][i] = sum * (1 - a[l][i] * a[l][i]);
       }
-    for (let l = 0; l < 3; l++)
+    for (let l = 0; l < this.weights.length; l++)
       for (let j = 0; j < this.shape[l + 1]; j++) {
         const g = this.gradients[l][j];
         for (let i = 0; i < this.shape[l]; i++) g[i] += d[l + 1][j] * a[l][i];
@@ -113,7 +119,7 @@ export class Network {
     this.updates++;
     const c1 = 1 - 0.9 ** this.updates,
       c2 = 1 - 0.999 ** this.updates;
-    for (let l = 0; l < 3; l++)
+    for (let l = 0; l < this.weights.length; l++)
       for (let j = 0; j < this.shape[l + 1]; j++)
         for (let i = 0; i <= this.shape[l]; i++) {
           const g = this.gradients[l][j][i] / batchSize,
@@ -126,7 +132,7 @@ export class Network {
         }
   }
   copyFrom(network) {
-    for (let l = 0; l < 3; l++)
+    for (let l = 0; l < this.weights.length; l++)
       for (let j = 0; j < this.shape[l + 1]; j++)
         for (let i = 0; i <= this.shape[l]; i++)
           this.weights[l][j][i] = network.weights[l][j][i];
@@ -136,18 +142,18 @@ export class Network {
       version: 2,
       algorithm: "double-dqn",
       shape: this.shape,
-      inputs: INPUT_NAMES,
-      outputs: OUTPUT_NAMES,
+      inputs: this.spec.inputs,
+      outputs: this.spec.outputs,
       explanation:
         "Hidden neurons: tanh(sum(input × weight) + bias). Action neurons: sum(input × weight) + bias. Choose the action with the highest Q value.",
       layers: this.weights.map((layer, l) => ({
-        name: LAYER_NAMES[l],
-        activation: l === 2 ? "linear" : "tanh",
+        name: layerName(l, this.shape),
+        activation: l === this.weights.length - 1 ? "linear" : "tanh",
         neurons: layer.map((row, j) => ({
-          name: neuronNames(l, this.shape)[j],
+          name: neuronNames(l, this.shape, this.spec.outputs)[j],
           bias: row[this.shape[l]],
           weights: Object.fromEntries(
-            (l === 0 ? INPUT_NAMES : neuronNames(l - 1, this.shape)).map(
+            (l === 0 ? this.spec.inputs : neuronNames(l - 1, this.shape, this.spec.outputs)).map(
               (name, i) => [name, row[i]],
             ),
           ),
@@ -155,37 +161,38 @@ export class Network {
       })),
     };
   }
-  static load(data) {
+  static load(data, spec = BREAKOUT_SPEC) {
     if (
       data?.version !== 2 ||
       data.algorithm !== "double-dqn" ||
-      JSON.stringify(data.inputs) !== JSON.stringify(INPUT_NAMES) ||
-      JSON.stringify(data.outputs) !== JSON.stringify(OUTPUT_NAMES) ||
+      JSON.stringify(data.inputs) !== JSON.stringify(spec.inputs) ||
+      JSON.stringify(data.outputs) !== JSON.stringify(spec.outputs) ||
       !Array.isArray(data.shape) ||
-      data.shape.length !== 4 ||
-      data.shape[0] !== 5 ||
-      data.shape[3] !== 3 ||
+      data.shape.length < spec.minHiddenLayers + 2 ||
+      data.shape.length > spec.maxHiddenLayers + 2 ||
+      data.shape[0] !== spec.inputs.length ||
+      data.shape.at(-1) !== spec.outputs.length ||
       data.shape
-        .slice(1, 3)
-        .some((n) => !Number.isInteger(n) || n < 1 || n > 64) ||
+        .slice(1, -1)
+        .some((n) => !Number.isInteger(n) || n < 1 || n > spec.maxHiddenNeurons) ||
       !Array.isArray(data.layers) ||
-      data.layers.length !== 3
+      data.layers.length !== data.shape.length - 1
     )
       throw new Error(
-        "Unsupported model format. Use a Breakout Lab reinforcement-learning checkpoint.",
+        `Unsupported model format. Expected ${spec.inputs.length} inputs, ${spec.outputs.length} outputs, ${spec.minHiddenLayers}–${spec.maxHiddenLayers} hidden layers, and 1–${spec.maxHiddenNeurons} neurons per hidden layer.`,
       );
     const weights = data.layers.map((layer, l) => {
       if (
-        layer.name !== LAYER_NAMES[l] ||
-        layer.activation !== (l === 2 ? "linear" : "tanh") ||
+        layer.name !== layerName(l, data.shape) ||
+        layer.activation !== (l === data.shape.length - 2 ? "linear" : "tanh") ||
         !Array.isArray(layer.neurons) ||
         layer.neurons.length !== data.shape[l + 1]
       )
         throw new Error("Invalid model layers.");
       return layer.neurons.map((neuron, j) => {
-        const names = l === 0 ? INPUT_NAMES : neuronNames(l - 1, data.shape);
+        const names = l === 0 ? spec.inputs : neuronNames(l - 1, data.shape, spec.outputs);
         if (
-          neuron.name !== neuronNames(l, data.shape)[j] ||
+          neuron.name !== neuronNames(l, data.shape, spec.outputs)[j] ||
           !neuron.weights ||
           Object.keys(neuron.weights).length !== names.length
         )
@@ -196,6 +203,6 @@ export class Network {
         return row;
       });
     });
-    return new Network(weights, Math.random, data.shape);
+    return new Network(weights, Math.random, data.shape, spec);
   }
 }

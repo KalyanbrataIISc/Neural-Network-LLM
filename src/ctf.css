@@ -1,0 +1,23 @@
+.ctf-scoreboard { gap: 16px; flex-wrap: wrap; }
+.ctf-scoreboard strong { font-size: 22px; }
+.mission-notes { padding: 8px 24px 20px; }
+.mission-notes p { font-size: 12px; line-height: 1.7; color: #adbea4; }
+.mission-notes b { color: #e1ebda; }
+.ctf-explain { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px; }
+.ctf-explain .card { padding: 28px; }
+.ctf-explain h2 { font-size: 23px; margin: 16px 0; }
+.ctf-explain .reward-settings { margin-top: 0; }
+.ctf-explain .reward-row { grid-template-columns: minmax(0, 1fr) 120px; }
+.sensor-guide { padding-left: 18px; color: #b3c4aa; font-size: 13px; line-height: 1.8; }
+.sensor-guide li { margin-bottom: 16px; }
+.sensor-guide b { color: #e1ebda; }
+pre { overflow: auto; max-height: 360px; padding: 16px; background: #10180f; font: 11px/1.8 ui-monospace, monospace; color: #c5e4b2; }
+.action-readout { color: var(--mint) !important; }
+.touch-controls { display: none; padding: 12px 24px; gap: 12px; align-items: center; justify-content: center; }
+.direction-pad { display: grid; grid-template-columns: repeat(3, 42px); gap: 5px; }
+.touch-controls button { min-height: 42px; border: 1px solid #49623e; border-radius: 6px; background: #263220; color: var(--mint); touch-action: none; user-select: none; }
+.touch-ability { padding: 16px; }
+@media (pointer: coarse), (max-width: 800px) { .touch-controls { display: flex; } }
+.arena #game { width: 100%; height: auto; aspect-ratio: 3 / 2; }
+.overlay p { max-width: 400px; }
+@media (max-width: 800px) { .ctf-explain { grid-template-columns: 1fr; } .ctf-scoreboard { padding: 16px; gap: 12px; } .ctf-scoreboard strong { font-size: 16px; } .game-footer { flex-wrap: wrap; gap: 10px; } }

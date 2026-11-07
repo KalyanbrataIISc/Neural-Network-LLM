@@ -1,10 +1,13 @@
 import { Game, W, H, R, PADDLE_W, PADDLE_Y, inputs } from "./game.js";
 import { Network, ACTIONS, INPUT_NAMES, neuronNames } from "./network.js";
+import { RewardEditor } from "./reward-editor.js";
+import { BREAKOUT_REWARDS } from "./rewards.js";
 import { ACTION_FRAMES } from "./trainer.js";
 const $ = (id) => document.getElementById(id),
   game = new Game(),
   ctx = $("game").getContext("2d"),
   chart = $("chart").getContext("2d");
+const rewardEditor = new RewardEditor($("reward-fields"), BREAKOUT_REWARDS, "breakout-rewards-v1");
 const STORAGE = "breakout-lab-dqn-v2";
 let mode = "human",
   model = null,
@@ -39,6 +42,7 @@ function install(data, persist = true) {
       );
     }
   }
+  $("checkpoint-rewards").textContent = rewardEditor.describe(data.rewardConfig);
   aiTicks = 0;
   const count = network.weights.flat(2).length;
   $("experiment-shape").textContent =
@@ -111,7 +115,7 @@ $("reset").onclick = () => {
   sync();
 };
 window.addEventListener("keydown", (e) => {
-  if (e.target.closest("select,input,button,a")) return;
+  if (e.target.closest("select,input,textarea,button,a,dialog")) return;
   if (["ArrowLeft", "ArrowRight", "a", "d", "A", "D", " "].includes(e.key)) {
     e.preventDefault();
     keys.add(e.key.toLowerCase());
@@ -302,6 +306,8 @@ function stopTraining() {
   $("train").innerHTML = "✧ <span>Train neural network</span><span>↗</span>";
   $("epochs").disabled = false;
   $("fresh").disabled = false;
+  $("policy-selection").disabled = false;
+  rewardEditor.lock(false);
 }
 $("epochs").onchange = () => {
   if (!worker)
@@ -314,10 +320,16 @@ $("train").onclick = () => {
     $("train-status").textContent = "Training stopped";
     return;
   }
+  let rewardConfig;
+  try { rewardConfig = rewardEditor.save(); }
+  catch (error) { notice(error.message); return; }
+  rewardEditor.lock(true);
+  $("reward-average").textContent = "Mean episode reward: —";
   history = [];
   drawChart();
   $("epochs").disabled = true;
   $("fresh").disabled = true;
+  $("policy-selection").disabled = true;
   $("train").innerHTML = "□ <span>Stop training</span>";
   $("train-status").textContent = "Starting training…";
   try {
@@ -339,6 +351,10 @@ $("train").onclick = () => {
           `${data.frames.toLocaleString()} simulated frames`;
         $("throughput").textContent =
           `${data.framesPerSecond.toLocaleString()} frames / sec`;
+        $("reward-average").textContent = data.episode
+          ? `Mean episode reward: ${data.reward.toFixed(3)} (last ${Math.min(100, data.episode)} episodes). Evaluation uses game points, not this reward.`
+          : "Mean episode reward: waiting for completed episodes…";
+        $("reward-breakdown").textContent = BREAKOUT_REWARDS.map(({ key, label }) => `${label}: ${data.rewardTerms[key].toFixed(3)}`).join(" · ");
         $("exploration").textContent =
           `Exploration: ${Math.round(data.epsilon * 100)}%`;
       }
@@ -374,6 +390,8 @@ $("train").onclick = () => {
       episodes: Number($("epochs").value),
       model,
       resetWeights: $("fresh").checked,
+      rewardConfig,
+      checkpointSelection: $("policy-selection").value,
     });
   } catch (e) {
     stopTraining();
@@ -398,6 +416,8 @@ $("file").onchange = async () => {
   try {
     if (file.size > 1500000) throw new Error("Weight file is too large.");
     const data = JSON.parse(await file.text());
+    Network.load(data);
+    if (worker) { stopTraining(); $("train-status").textContent = "Training stopped for model import"; }
     install(data);
     notice("Weights imported. Your network is ready to play.");
   } catch (e) {
@@ -417,6 +437,11 @@ function inspectNetwork() {
     `${draft.shape.join(" → ")} · ${draft.layers.reduce((n, l) => n + l.neurons.reduce((s, v) => s + Object.keys(v.weights).length + 1, 0), 0)} parameters`;
   $("add-neuron").disabled = layer === 2 || draft.shape[layer + 1] >= 64;
   $("remove-neuron").disabled = layer === 2 || draft.shape[layer + 1] <= 1;
+  $("layer-limit").textContent = layer === 2
+    ? "Output layer is fixed at 3 actions. Neurons cannot be added or removed here."
+    : `Hidden layer ${layer + 1}: ${draft.shape[layer + 1]} / 64 neurons. ` +
+      (draft.shape[layer + 1] === 64 ? "Maximum reached; remove a neuron to make room." :
+       draft.shape[layer + 1] === 1 ? "Minimum reached; at least one neuron is required." : "Allowed range: 1–64 neurons.");
   $("neuron-equation").textContent =
     layer < 2
       ? "Each neuron = tanh(sum(input × weight) + bias)"

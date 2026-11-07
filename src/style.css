@@ -815,3 +815,28 @@ summary {
   accent-color: var(--mint);
   margin: 0;
 }
+
+.experiment-link { color: var(--mint); font-size: 12px; text-decoration: none; }
+.network-limits {
+  font-size: 12px;
+  line-height: 1.65;
+  color: #bccbb3;
+  padding: 12px;
+  border: 1px solid #40513a;
+  border-radius: 6px;
+  background: #b9f57708;
+}
+.reward-settings { margin: 16px 0; line-height: 1.65; }
+.reward-settings summary { color: var(--mint); font-weight: 600; }
+.reward-settings p, .reward-average { font-size: 12px; line-height: 1.65; color: #b6c5ad; }
+.reward-row { display: grid; grid-template-columns: minmax(0, 1fr) 100px; gap: 6px 12px; margin: 18px 0; }
+.reward-row label { font-size: 12px; align-self: center; color: #deead7; }
+.reward-row small { grid-column: 1 / -1; color: #a8b89f; font-size: 11px; }
+.reward-row input, .architecture-input {
+  width: 100%; min-width: 0; padding: 8px; border: 1px solid #4b5a41;
+  border-radius: 5px; color: #e4f0dc; background: #10180f; font: inherit;
+}
+.reward-row input[aria-invalid="true"] { border-color: #f89c87; }
+.reward-status { color: var(--mint) !important; }
+button:disabled, input:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 520px) { header .local { display: none; } }

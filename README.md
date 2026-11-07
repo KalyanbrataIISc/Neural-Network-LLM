@@ -13,6 +13,8 @@ npm start
 
 Open **http://localhost:3000** in Chrome, Safari, or Firefox. No `npm install`, Python, ML libraries, GPU, or internet connection is needed to run it. Stop with Control-C. Use `PORT=3001 npm start` if port 3000 is occupied.
 
+For the larger **Robot Capture** experiment, follow **Try Robot Capture** or open **http://localhost:3000/ctf.html**. It has **96 inputs, 24 actions, editable rewards, and 1–4 hidden layers of 1–128 neurons each**. Navigate cover, fight four sentries, gather supplies, retrieve the flag, and return home. See [ROBOT_CAPTURE.md](ROBOT_CAPTURE.md) for the controls, sensors, exact reward formulas, and training behavior.
+
 ## Play and train
 
 - **Human control:** click Start playing. Move with **← / →** or **A / D**. **Space** launches the ball or pauses/resumes. Touch users can drag on the playing field.
@@ -28,9 +30,21 @@ Click **Edit neurons & weights**. Every weight and bias is an editable number. S
 
 Each of the two hidden layers can contain **1–64 neurons** independently. Adding a neuron creates its incoming connections and adds a new connection to every neuron in the next layer. New outgoing weights are zero, so adding alone initially preserves the policy. Change these weights to see an effect, or train the expanded model. The five game inputs and three paddle actions are fixed interfaces.
 
+Breakout has exactly **2 hidden layers** (4 layers including input/output); layers cannot be added or removed. The maximum is **4,739 parameters**. Limits are displayed beside the architecture and in the editor, with explanations when add/remove buttons are disabled. These are experiment-specific constraints.
+
 You can also edit the **complete JSON** inside the editor, or edit `models/pretrained.json` on disk. **Reload project weights** reads that file and applies it, even if browser storage contains another model. Editing a file alone does not hot-reload it: use that button or import your edited file. All valid numeric edits execute as network parameters. Invalid shapes, names, or non-finite values produce an error while the previous controller remains usable.
 
 See [NEURAL_NETWORK.md](NEURAL_NETWORK.md) for the exact schema and calculations.
+
+## Inspect and change reinforcement rewards
+
+Open **Reinforcement rewards · view & edit** in the training panel. Every coefficient is editable: brick points (×0.025), paddle returns (+2), missed balls (−3), board completion (+10), potential-based alignment shaping (×0.8), and descending-ball distance (×−0.025). Each field explains its exact calculation. Zero disables a term; negative values reverse incentives. Allowed values are finite numbers from −1,000,000 to +1,000,000.
+
+Edits save in this browser and apply to the **next training run**. Retraining changes the policy; editing a reward does not immediately change saved weights. Reward inputs lock while training uses its snapshot. The panel reports mean episode reward and each term's contribution over the most recent 100 episodes, separately from evaluation game points. Exported checkpoints record the run's exact `rewardConfig` and seeds; **Saved training run rewards** shows those independently of your next-run settings. Legacy checkpoints explicitly report that exact coefficients were not recorded. Importing weights does not replace your next-run preferences.
+
+Use **Policy to save** to choose the best evaluation points (default), or the **latest evaluated policy** to inspect behavior learned under your rewards even if game points fall. Best-points mode can retain the initial weights. Both modes checkpoint every 100 episodes and at completion.
+
+For a controlled comparison, keep the architecture/budget, select **Reset weights**, and change one reward. Browser training uses seed 2026; evaluation uses seeds 9000–9004. For terminal training, pass `--rewards my-rewards.json` with an object of coefficient overrides. A resumed terminal run uses its saved coefficients unless explicitly overridden. Add `--save-policy latest` to save the latest evaluated policy instead of the best game points.
 
 ## Train from the terminal
 

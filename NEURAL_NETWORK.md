@@ -73,6 +73,8 @@ For hand-editing JSON, keep all of these in agreement:
 
 The two hidden counts can each be 1–64. Values must be finite numbers with magnitude at most 1,000,000. JSON cannot contain comments, `NaN`, or `Infinity`. The top-level `version: 2` and `algorithm: "double-dqn"` identify this checkpoint format.
 
+Breakout supports exactly two hidden layers: four layers in total when counting the fixed input and output layers, or three parameterized layers. Depth cannot be changed through the editor or JSON. The maximum architecture is `5 → 64 → 64 → 3`, with 4,739 parameters. The browser import limit is 1,500,000 bytes. The UI displays these constraints. Robot Capture has a separate 96-input/24-output interface and larger architecture limits; see [ROBOT_CAPTURE.md](ROBOT_CAPTURE.md).
+
 The file also includes descriptive training metadata such as episodes, simulated frames, and evaluation score. These fields are not input to the neurons. Editing the network through the UI clears old evaluation metadata so it is not presented as a measurement of your edited policy.
 
 ## Training your edited architecture
@@ -84,3 +86,20 @@ npm run train -- --episodes 25000 --resume my-weights.json --out models/experime
 ```
 
 The source in `src/network.js` spells out the same neuron operations and optimization in JavaScript without an ML framework.
+
+## The complete Breakout reward
+
+For each action, up to four physics frames are simulated. Let `phi = -abs(ball.x - paddle.x) / 100`. The six coefficients below are editable under **Reinforcement rewards · view & edit**:
+
+```text
+reward = brickPoint × pointsEarned
+       + paddleHit × paddleReturns
+       + missedBall × lifeLost
+       + clearedBoard × boardCleared
+       + alignment × (0.99 × nextPhi - previousPhi)
+       + descendingDistance × (ballMovingDown ? abs(ball.x - paddle.x) / 900 : 0)
+```
+
+Defaults are `brickPoint: 0.025`, `paddleHit: 2`, `missedBall: -3`, `clearedBoard: 10`, `alignment: 0.8`, and `descendingDistance: -0.025`. Events are counted over the action; the descending feature uses the final state. On a terminal transition (first lost life or cleared board), `nextPhi` is zero. At the 3,600-frame time limit there is no additional reward and the next Q value still bootstraps. Rewards are summed without clipping. Huber loss clips the derivative of temporal-difference error to [−1, 1]; it does not clip reward.
+
+The UI locks a validated reward snapshot during each run and saves the exact coefficients as `rewardConfig` in new checkpoints. Mean episode reward and its six mean contributions use a rolling window of up to 100 completed episodes. Evaluation remains average brick points over five fixed-seed games, independent of custom rewards; in best-points mode the checkpoint is chosen by evaluation points, then paddle returns. The alternative **Latest evaluated policy** mode saves the newest evaluated weights even when points fall, making reward experiments easier to inspect. `checkpointEpisode` identifies which evaluation checkpoint was retained, and can be zero when the run's initial weights remained best. Changing rewards requires training to affect network behavior.
