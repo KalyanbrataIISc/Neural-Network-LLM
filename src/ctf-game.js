@@ -17,7 +17,7 @@ export const CTF_INPUT_NAMES = [
   ...Array.from({ length: 4 }, (_, i) => ["dx", "dy", "type", "available"].map((name) => `supply_${i + 1}_${name}`)).flat(),
 ];
 export const CTF_OUTPUT_NAMES = ABILITIES.flatMap((ability) => DIRECTION_NAMES.map((direction) => `${ability}_${direction}`));
-export const CTF_SPEC = Object.freeze({ inputs: CTF_INPUT_NAMES, outputs: CTF_OUTPUT_NAMES, minHiddenLayers: 1, maxHiddenLayers: 4, maxHiddenNeurons: 128 });
+export const CTF_SPEC = Object.freeze({ inputs: CTF_INPUT_NAMES, outputs: CTF_OUTPUT_NAMES, minHiddenLayers: 1, maxHiddenLayers: 4, maxHiddenNeurons: 128, observationSchema: "robot-capture-v1" });
 export const CTF_REWARDS = [
   { key: "flagPickup", label: "Pick up the flag", value: 8, description: "Added once when you reach the enemy flag." },
   { key: "delivery", label: "Deliver the flag", value: 30, description: "Added when you bring the flag to your base. Wins and ends the episode." },

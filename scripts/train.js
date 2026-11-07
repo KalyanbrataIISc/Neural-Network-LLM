@@ -7,7 +7,7 @@ const args = process.argv.slice(2),
   option = (name, fallback) =>
     args.includes(name) ? args[args.indexOf(name) + 1] : fallback;
 const gameName = option("--game", "breakout");
-if (!["breakout", "ctf"].includes(gameName)) throw new Error("Use --game breakout or --game ctf.");
+if (!["breakout", "catch", "ctf"].includes(gameName)) throw new Error("Use --game breakout, --game catch, or --game ctf.");
 const environment = gameName === "ctf" ? CTF_ENV : undefined;
 const episodes = Number(option("--episodes", "5000")),
   output = option("--out", gameName === "ctf" ? "models/robot-capture.json" : "models/pretrained.json"),
@@ -29,6 +29,9 @@ const model = train({
   rewardConfig,
   checkpointSelection: option("--save-policy", "score"),
   environment,
+  gameId: gameName,
+  plan: option("--plan", null) ? JSON.parse(readFileSync(option("--plan"), "utf8")) : null,
+  order: option("--order", "interleaved"),
   onCheckpoint: save,
   onProgress: (p) => {
     if (p.episode % 100 === 0 || p.episode === episodes)
@@ -39,4 +42,4 @@ const model = train({
 });
 save(model);
 console.log("Run reward coefficients:", model.rewardConfig);
-console.log("Saved checkpoint evaluation:", evaluate(Network.load(model, gameName === "ctf" ? CTF_SPEC : undefined), 5, 3600, environment));
+console.log("Saved checkpoint evaluation:", evaluate(Network.load(model, gameName === "ctf" ? CTF_SPEC : undefined), 5, 3600, environment || gameName));

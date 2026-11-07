@@ -8,12 +8,13 @@ export const INPUT_NAMES = [
   "paddle_x",
 ];
 export const OUTPUT_NAMES = ["move_left", "stay", "move_right"];
-export const LAYER_NAMES = ["hidden_1", "hidden_2", "actions"];
 export const BREAKOUT_SPEC = Object.freeze({
-  inputs: INPUT_NAMES, outputs: OUTPUT_NAMES, minHiddenLayers: 2,
-  maxHiddenLayers: 2, maxHiddenNeurons: 64,
+  inputs: INPUT_NAMES, outputs: OUTPUT_NAMES, minHiddenLayers: 1,
+  maxHiddenLayers: 6, maxHiddenNeurons: 64, observationSchema: "paddle-tracking-v1",
 });
-const layerName = (layer, shape) => layer === shape.length - 2 ? "actions" : `hidden_${layer + 1}`;
+export function layerName(layer, shape = SHAPE) {
+  return layer === shape.length - 2 ? "actions" : `hidden_${layer + 1}`;
+}
 export function neuronNames(layer, shape = SHAPE, outputs = OUTPUT_NAMES) {
   return layer === shape.length - 2
     ? outputs
@@ -99,7 +100,7 @@ export class Network {
     const error = pred - target;
     d.at(-1).fill(0);
     d.at(-1)[action] = Math.max(-1, Math.min(1, error));
-    for (let l = this.weights.length - 1; l > 0; l--)
+    for (let l = this.shape.length - 2; l > 0; l--)
       for (let i = 0; i < this.shape[l]; i++) {
         let sum = 0;
         for (let j = 0; j < this.shape[l + 1]; j++)
@@ -140,6 +141,7 @@ export class Network {
   serialize() {
     return {
       version: 2,
+      observationSchema: this.spec.observationSchema,
       algorithm: "double-dqn",
       shape: this.shape,
       inputs: this.spec.inputs,
@@ -164,6 +166,7 @@ export class Network {
   static load(data, spec = BREAKOUT_SPEC) {
     if (
       data?.version !== 2 ||
+      (data.observationSchema && data.observationSchema !== spec.observationSchema) ||
       data.algorithm !== "double-dqn" ||
       JSON.stringify(data.inputs) !== JSON.stringify(spec.inputs) ||
       JSON.stringify(data.outputs) !== JSON.stringify(spec.outputs) ||
@@ -188,7 +191,7 @@ export class Network {
         !Array.isArray(layer.neurons) ||
         layer.neurons.length !== data.shape[l + 1]
       )
-        throw new Error("Invalid model layers.");
+        throw new Error(`Invalid layer ${l + 1}: expected ${layerName(l, data.shape)}, ${data.shape[l + 1]} neurons, and ${l === data.layers.length - 1 ? "linear" : "tanh"} activation.`);
       return layer.neurons.map((neuron, j) => {
         const names = l === 0 ? spec.inputs : neuronNames(l - 1, data.shape, spec.outputs);
         if (
@@ -196,10 +199,10 @@ export class Network {
           !neuron.weights ||
           Object.keys(neuron.weights).length !== names.length
         )
-          throw new Error("Invalid neuron structure.");
+          throw new Error(`Invalid neuron ${neuronNames(l, data.shape, spec.outputs)[j]}: check its name and all ${names.length} incoming connection names.`);
         const row = [...names.map((name) => neuron.weights[name]), neuron.bias];
         if (row.some((v) => !Number.isFinite(v) || Math.abs(v) > 1000000))
-          throw new Error("Invalid model weights.");
+          throw new Error(`Invalid numeric weight or bias in ${neuronNames(l, data.shape, spec.outputs)[j]}. Use finite numbers with magnitude ≤ 1,000,000.`);
         return row;
       });
     });

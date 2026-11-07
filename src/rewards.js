@@ -1,9 +1,9 @@
 export const REWARD_LIMIT = 1000000;
 export const BREAKOUT_REWARDS = [
-  { key: "brickPoint", label: "Per brick point", value: 0.025,
-    description: "Multiply points earned by this value. A brick gives 10–50 points, so the default reward is +0.25 to +1.25." },
+  { key: "brickPoint", label: "Per game point", value: 0.025,
+    description: "Multiply game points earned by this value. Breakout bricks give 10–50 points (+0.25 to +1.25 by default); a Catch return gives 10 points (+0.25)." },
   { key: "paddleHit", label: "Paddle return", value: 2,
-    description: "Added for each ball returned by the paddle." },
+    description: "Added for each ball returned or caught by the paddle, in addition to the game-point term." },
   { key: "missedBall", label: "Missed ball", value: -3,
     description: "Added when a life is lost. The training episode ends on the first miss." },
   { key: "clearedBoard", label: "Clear the board", value: 10,

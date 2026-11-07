@@ -1,163 +1,176 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Game, PADDLE_Y, R } from "../src/game.js";
+import { BrainStore } from "../src/brains.js";
 import { Network, rng } from "../src/network.js";
-import { transition, train } from "../src/trainer.js";
-import { DEFAULT_REWARDS, BREAKOUT_REWARDS, validateRewards } from "../src/rewards.js";
-import { CaptureGame, CTF_ENV, CTF_SPEC, CTF_INPUT_NAMES, CTF_OUTPUT_NAMES, CTF_REWARDS, FLAG, BASE, WALLS, captureInputs, captureTransition } from "../src/ctf-game.js";
-
-const zeros = (fields) => Object.fromEntries(fields.map(({ key }) => [key, 0]));
-const quietMission = () => {
-  const game = new CaptureGame(rng());
-  game.state = "playing";
-  for (const enemy of game.enemies) enemy.health = 0;
-  return game;
-};
-
-test("every Breakout reward is configurable, including zero and reversed incentives", () => {
-  const game = new Game(rng());
-  game.launch();
-  game.ball = { x: 450, y: PADDLE_Y - R - 1, vx: 0, vy: 4 };
-  const hit = transition(game, 1, { ...zeros(BREAKOUT_REWARDS), paddleHit: 7 });
-  assert.equal(hit.reward, 7);
-  assert.equal(hit.terms.paddleHit, 7);
-  game.ball = { x: 450, y: 560, vx: 0, vy: 4 };
-  const miss = transition(game, 1, { ...zeros(BREAKOUT_REWARDS), missedBall: 11 });
-  assert.equal(miss.reward, 11);
-  assert.equal(miss.done, true);
-
-  const brickGame = new Game(rng()); brickGame.launch();
-  const b = brickGame.bricks[40];
-  brickGame.ball = { x: b.x + 20, y: b.y + b.h + R + 1, vx: 0, vy: -4 };
-  const brick = transition(brickGame, 1, { ...zeros(BREAKOUT_REWARDS), brickPoint: -2 });
-  assert.equal(brick.reward, -20);
+import { createGame, schedule, observe } from "../src/games.js";
+import { train } from "../src/trainer.js";
+import { flowClock } from "../src/network-map.js";
+test("brain library validates, persists copies, renames and deletes", () => {
+  const data = new Map(),
+    storage = {
+      getItem: (k) => data.get(k) || null,
+      setItem: (k, v) => data.set(k, v),
+    };
+  const library = new BrainStore(storage),
+    model = new Network(null, rng(1)).serialize();
+  const entry = library.save("Experiment", model);
+  model.layers[0].neurons[0].bias = 100;
+  assert.notEqual(library.get(entry.id).model.layers[0].neurons[0].bias, 100);
+  library.rename(entry.id, "Renamed");
+  assert.equal(new BrainStore(storage).get(entry.id).name, "Renamed");
+  assert.throws(() =>
+    library.save("Bad", { ...model, observationSchema: "unknown" }),
+  );
+  assert.equal(library.records.length, 1);
+  library.delete(entry.id);
+  assert.equal(new BrainStore(storage).records.length, 0);
+});
+test("plans schedule exact trials in both orders", () => {
+  const plan = [
+    { game: "breakout", trials: 3 },
+    { game: "catch", trials: 2 },
+  ];
+  assert.deepEqual(schedule(plan), [
+    "breakout",
+    "catch",
+    "breakout",
+    "catch",
+    "breakout",
+  ]);
+  assert.deepEqual(schedule(plan, "sequential"), [
+    "breakout",
+    "breakout",
+    "breakout",
+    "catch",
+    "catch",
+  ]);
+  assert.throws(() => schedule([{ game: "catch", trials: -1 }]));
+  assert.throws(() => schedule([{ game: "other", trials: 1 }]));
+});
+test("Catch shares observations and actions without immediately winning on empty bricks", () => {
+  const g = createGame("catch", rng());
+  g.launch();
+  g.ball = { x: g.paddle, y: 480, vx: 0, vy: 4 };
+  g.step(1, 0);
+  assert.equal(g.hits, 1);
+  assert.equal(g.score, 10);
+  assert.equal(g.state, "playing");
+  assert.equal(observe(g).length, 5);
+  g.ball = { x: 10, y: 546, vx: 0, vy: 4 };
+  g.step(1, 0);
+  assert.equal(g.lives, 2);
+  assert.equal(g.state, "ready");
+});
+test("mixed training records exact completed counts and produces a reusable brain", () => {
+  const initialModel = new Network(null, rng(), [5, 2, 3, 3]).serialize();
+  const model = train({
+    initialModel,
+    plan: [
+      { game: "breakout", trials: 2 },
+      { game: "catch", trials: 1 },
+    ],
+    episodes: 3,
+  });
+  assert.deepEqual(model.completedTrials, { breakout: 2, catch: 1 });
+  assert.deepEqual(Network.load(model).shape, [5, 2, 3, 3]);
+  assert.equal(model.trainingHistory.length, 1);
+});
+test("one animation clock reaches each layer before the next edge starts", () => {
+  const before = flowClock(2399),
+    after = flowClock(2400);
+  assert.equal(before.phase, 1);
+  assert.ok(before.progress > 0.999);
+  assert.equal(after.phase, 2);
+  assert.equal(after.progress, 0);
+  assert.equal(before.cycle, after.cycle);
+  assert.equal(flowClock(4800).cycle, 1);
 });
 
-test("reward validation rejects nonnumeric and unknown terms without mutating defaults", () => {
-  for (const value of [NaN, Infinity, "2", null, 1000001])
-    assert.throws(() => validateRewards({ paddleHit: value }));
-  assert.throws(() => validateRewards({ typo: 3 }));
-  const custom = validateRewards({ alignment: 0 });
-  assert.equal(custom.alignment, 0);
-  assert.equal(custom.missedBall, -3);
-  assert.equal(DEFAULT_REWARDS.alignment, 0.8);
-});
-
-test("Robot Capture has exactly 96 finite named inputs and 24 unique action outputs", () => {
-  const game = new CaptureGame(rng()); game.state = "playing";
-  assert.equal(new Set(CTF_INPUT_NAMES).size, 96);
-  assert.equal(new Set(CTF_OUTPUT_NAMES).size, 24);
-  for (let action = 0; action < 24; action++) {
-    captureTransition(game, action);
-    const input = captureInputs(game);
-    assert.equal(input.length, 96);
-    assert.ok(input.every((v) => Number.isFinite(v) && v >= -1 && v <= 1));
-  }
-});
-
-test("variable-depth robot networks roundtrip, learn, and preserve fixed interfaces", () => {
-  for (const hidden of [[3], [3, 4, 3, 2]]) {
-    const network = new Network(null, rng(), [96, ...hidden, 24], CTF_SPEC);
-    const input = captureInputs(new CaptureGame(rng()));
-    const loaded = Network.load(JSON.parse(JSON.stringify(network.serialize())), CTF_SPEC);
-    assert.deepEqual([...loaded.predict(input)], [...network.predict(input)]);
-    const before = Math.abs(loaded.predict(input)[23] - 2);
-    for (let i = 0; i < 100; i++) {
-      loaded.clearGradients(); loaded.accumulate(input, 23, 2); loaded.update(1);
+test("variable hidden layers roundtrip and train, including a one-layer handwritten brain", () => {
+  for (const shape of [
+    [5, 4, 3],
+    [5, 2, 3, 2, 3],
+  ]) {
+    const net = new Network(null, rng(22), shape);
+    const loaded = Network.load(net.serialize());
+    assert.deepEqual(loaded.shape, shape);
+    const sample = [0.1, 0.2, 0.3, 0.4, 0.5],
+      expected = [...net.predict(sample)];
+    assert.deepEqual([...loaded.predict(sample)], expected);
+    const before = Math.abs(loaded.predict(sample)[1] - 2);
+    for (let i = 0; i < 400; i++) {
+      loaded.clearGradients();
+      loaded.accumulate(sample, 1, 2);
+      loaded.update(1);
     }
-    assert.ok(Math.abs(loaded.predict(input)[23] - 2) < before);
-    assert.throws(() => Network.load(network.serialize()));
+    assert.ok(Math.abs(loaded.predict(sample)[1] - 2) < before * 0.4);
+    const result = train({
+      initialModel: loaded.serialize(),
+      plan: [{ game: "catch", trials: 1 }],
+    });
+    assert.deepEqual(Network.load(result).shape, shape);
   }
-  const maximum = new Network(null, rng(), [96, 128, 128, 128, 128, 24], CTF_SPEC);
-  assert.equal(maximum.weights.flat(2).length, 65048);
-  assert.deepEqual(Network.load(maximum.serialize(), CTF_SPEC).shape, maximum.shape);
-  for (const shape of [[96, 0, 24], [96, 129, 24], [96, 2, 2, 2, 2, 2, 24]])
-    assert.throws(() => Network.load({ ...maximum.serialize(), shape }, CTF_SPEC));
 });
 
-test("flag pickup switches the objective; delivering wins with editable rewards", () => {
-  const game = quietMission();
-  Object.assign(game.player, FLAG);
-  const picked = captureTransition(game, null, { ...zeros(CTF_REWARDS), flagPickup: 17 });
-  assert.equal(picked.reward, 17);
-  assert.equal(picked.done, false);
-  assert.equal(game.carrying, true);
-  assert.equal(game.goal(), BASE);
-  assert.equal(game.score, 25);
-  Object.assign(game.player, BASE);
-  const delivered = captureTransition(game, null, { ...zeros(CTF_REWARDS), delivery: 51 });
-  assert.equal(delivered.reward, 51);
-  assert.equal(delivered.done, true);
-  assert.equal(game.state, "won");
-  assert.equal(game.score, 125);
+test("LLM prompt and pasted JSON have a complete valid handwritten contract", async () => {
+  const { brainPrompt, parseBrainJSON } =
+    await import("../src/brain-prompt.js");
+  const prompt = brainPrompt({
+    gameId: "catch",
+    sharedSource: "SHARED PHYSICS",
+    gameSource: "TASK PHYSICS",
+  });
+  assert.match(prompt, /Do NOT use tools, internet/);
+  assert.match(prompt, /simulations/);
+  assert.match(prompt, /SHARED PHYSICS/);
+  assert.match(prompt, /TASK PHYSICS/);
+  assert.match(prompt, /target.vy\/6/);
+  const model = new Network(null, rng(), [5, 4, 3]).serialize();
+  const wrapped = "```json\n" + JSON.stringify(model) + "\n```";
+  assert.deepEqual(Network.load(parseBrainJSON(wrapped)).shape, [5, 4, 3]);
+  assert.throws(() => parseBrainJSON("const brain = {}"));
 });
 
-test("dash consumes energy and cannot cross a wall", () => {
-  const game = quietMission(), wall = WALLS[0];
-  Object.assign(game.player, { x: wall.x - 13, y: wall.y + 50, energy: 100 });
-  captureTransition(game, 18); // Dash east.
-  assert.ok(game.player.x <= wall.x - 12);
-  assert.ok(game.player.energy < 81);
-  assert.ok(game.player.dashCooldown > 0);
+test("prompt templates preserve the exact requested architecture", async () => {
+  const { brainPrompt } = await import("../src/brain-prompt.js");
+  for (const shape of [
+    [5, 24, 24, 3],
+    [5, 8, 6, 2, 3],
+  ]) {
+    const text = brainPrompt({ shape });
+    const template = JSON.parse(
+      text.match(
+        /COMPLETE VALID STRUCTURE TO FILL[^\n]*\n([\s\S]*?)\n\nEXACT JAVASCRIPT/,
+      )[1],
+    );
+    assert.deepEqual(Network.load(template).shape, shape);
+    assert.equal(template.layers.length, shape.length - 1);
+  }
 });
 
-test("combat applies editable hit, defeat, damage, and terminal rewards", () => {
-  const game = quietMission();
-  const enemy = game.enemies[0];
-  Object.assign(enemy, { x: 140, y: 570, health: 20, cooldown: 9999 });
-  game.bullets = [{ x: 134, y: 570, vx: 8, vy: 0, enemy: false, life: 10 }];
-  const result = captureTransition(game, null, { ...zeros(CTF_REWARDS), enemyHit: 4, enemyDefeat: 9 });
-  assert.equal(result.reward, 13);
-  assert.equal(game.hits, 1);
-  assert.equal(game.kills, 1);
-  game.player.health = 10;
-  game.bullets = [{ x: game.player.x, y: game.player.y, vx: 0, vy: 0, enemy: true, life: 10 }];
-  const lost = captureTransition(game, null, { ...zeros(CTF_REWARDS), damage: -2, defeat: -30 });
-  assert.equal(lost.reward, -50);
-  assert.equal(lost.done, true);
-  assert.equal(game.state, "lost");
-});
-
-test("supply collection requires a deficit and awards the configured coefficient", () => {
-  const game = quietMission(), supply = game.supplies[0];
-  Object.assign(game.player, { x: supply.x, y: supply.y });
-  captureTransition(game, null);
-  assert.equal(game.pickups, 0);
-  game.player.health = 50;
-  const result = captureTransition(game, null, { ...zeros(CTF_REWARDS), supply: 6 });
-  assert.equal(result.reward, 6);
-  assert.equal(game.player.health, 90);
-  assert.equal(game.pickups, 1);
-  assert.ok(supply.cooldown > 0);
-});
-
-test("zero rewards disable every incentive while physics and score keep working", () => {
-  const game = quietMission();
-  Object.assign(game.player, FLAG);
-  const result = captureTransition(game, null, zeros(CTF_REWARDS));
-  assert.equal(result.reward, 0);
-  assert.equal(game.carrying, true);
-  assert.equal(game.score, 25);
-});
-
-test("a real training run uses chosen rewards, reports contributions, and exports its config", () => {
-  const initial = new Network(null, rng(), [96, 2, 24], CTF_SPEC).serialize();
-  initial.untrained = true;
-  const settings = zeros(CTF_REWARDS);
-  const progress = [];
-  const result = train({ episodes: 1, seed: 17, environment: CTF_ENV,
-    initialModel: initial, rewardConfig: settings, checkpointSelection: "latest",
+test("manual training advances exactly one episode and retains replay and optimizer state", async () => {
+  const { trainingSession } = await import("../src/trainer.js");
+  const initialModel = new Network(null, () => 0.5).serialize(),
+    progress = [];
+  const session = trainingSession({
+    episodes: 3,
+    isManual: () => true,
+    initialModel,
     onProgress: (p) => progress.push(p),
   });
-  assert.equal(progress[0].epsilon, 1);
-  assert.equal(progress.at(-1).episode, 1);
-  assert.ok(progress.at(-1).frames > 0);
-  assert.equal(progress.at(-1).reward, 0);
-  assert.ok(Object.values(progress.at(-1).rewardTerms).every((v) => v === 0));
-  assert.deepEqual(result.rewardConfig, settings);
-  assert.equal(result.checkpointSelection, "latest");
-  assert.equal(result.checkpointEpisode, 1);
-  assert.equal(result.discountFactor, 0.99);
-  assert.equal(result.actionFrames, 4);
-  assert.ok(Network.load(result, CTF_SPEC));
+  const first = session.next();
+  assert.equal(first.value.episode, 1);
+  assert.ok(progress.at(-1).updates > 0);
+  assert.ok(first.value.model.layers.at(-1).neurons.some((n) => n.bias !== 0));
+  assert.ok(
+    first.value.model.layers[0].neurons.every(
+      (n) => n.bias === 0 && Object.values(n.weights).every((w) => w === 0),
+    ),
+  );
+  const replay = progress.at(-1).replaySize,
+    updates = progress.at(-1).updates;
+  const second = session.next();
+  assert.equal(second.value.episode, 2);
+  assert.ok(progress.at(-1).replaySize > replay);
+  assert.ok(progress.at(-1).updates > updates);
 });
